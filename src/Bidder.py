@@ -11,6 +11,8 @@ from tqdm import tqdm
 from Impression import ImpressionOpportunity
 from Models import BidShadingContextualBandit, BidShadingPolicy, PyTorchWinRateEstimator
 
+from swag_misc import SWAG
+import swag_utils
 
 class Bidder:
     """ Bidder base class"""
@@ -156,7 +158,7 @@ class EmpiricalShadedBidder(Bidder):
 class ValueLearningBidder(Bidder):
     """ A bidder that estimates the optimal bid shading distribution via value learning """
 
-    def __init__(self, rng, gamma_sigma, init_gamma=1.0, inference='search'):
+    def __init__(self, rng, gamma_sigma, init_gamma=1.0, inference='search', noise=False):
         self.gamma_sigma = gamma_sigma
         self.prev_gamma = init_gamma
         assert inference in ['search', 'policy']
@@ -164,8 +166,9 @@ class ValueLearningBidder(Bidder):
         self.gammas = []
         self.propensities = []
         self.winrate_model = PyTorchWinRateEstimator()
-        self.bidding_policy = BidShadingPolicy() if inference == 'policy' else None
+        self.bidding_policy = BidShadingPolicy(noise=noise) if inference == 'policy' else None
         self.model_initialised = False
+        self.noise = noise
         super(ValueLearningBidder, self).__init__(rng)
 
     def bid(self, value, context, estimated_CTR):
@@ -287,6 +290,10 @@ class ValueLearningBidder(Bidder):
             losses = []
             best_epoch, best_loss = -1, np.inf
             for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
+                #noisynet    
+                if self.noise == True:
+                    self.bidding_policy.sample_noise()
+
                 optimizer.zero_grad()
                 # Sample bid shading values
                 sampled_gamma, propensities = self.bidding_policy(X)
@@ -321,6 +328,195 @@ class ValueLearningBidder(Bidder):
             plt.legend()
             fig.set_tight_layout(True)
             #plt.show()
+        
+        
+
+        self.model_initialised = True
+
+    def clear_logs(self, memory):
+        if not memory:
+            self.gammas = []
+            self.propensities = []
+        else:
+            self.gammas = self.gammas[-memory:]
+            self.propensities = self.propensities[-memory:]
+
+class SWAG_ValueLearningBidder(Bidder):
+    """ A bidder that estimates the optimal bid shading distribution via value learning """
+
+    def __init__(self, rng, gamma_sigma, init_gamma=1.0, inference='search', noise=False):
+        self.gamma_sigma = gamma_sigma
+        self.prev_gamma = init_gamma
+        assert inference in ['search', 'policy']
+        self.inference = inference
+        self.gammas = []
+        self.propensities = []
+        self.winrate_model = PyTorchWinRateEstimator()
+        self.bidding_policy = BidShadingPolicy(noise=noise) if inference == 'policy' else None
+        self.model_initialised = False
+        self.swag_policy = SWAG(self.bidding_policy)
+        self.noise = noise
+        super(SWAG_ValueLearningBidder, self).__init__(rng)
+
+    def bid(self, value, context, estimated_CTR):
+        # Compute the bid as expected value
+        bid = value * estimated_CTR
+        if not self.model_initialised:
+            # Option 1:
+            # Sample the bid shadin factor 'gamma' from a Gaussian
+            gamma = self.rng.normal(self.prev_gamma, self.gamma_sigma)
+            normal_pdf = lambda g: np.exp(-((self.prev_gamma - g) / self.gamma_sigma)**2/2) / (self.gamma_sigma * np.sqrt(2 * np.pi))
+            propensity = normal_pdf(gamma)
+        elif self.inference == 'search':
+            # Option 2:
+            # Predict P(win|gamma,value,P(click))
+            # Use it to predict utility, maximise utility
+            n_values_search = 128
+            gamma_grid = self.rng.uniform(0.1, 1.0, size=n_values_search)
+            gamma_grid.sort()
+            x = torch.Tensor(np.hstack((np.tile(estimated_CTR, (n_values_search, 1)), np.tile(value, (n_values_search, 1)), gamma_grid.reshape(-1,1))))
+
+            prob_win = self.winrate_model(x).detach().numpy().ravel()
+
+            # U = W (V - P)
+            expected_value = bid
+            shaded_bids = expected_value * gamma_grid
+            estimated_utility = prob_win * (expected_value - shaded_bids)
+            gamma = gamma_grid[np.argmax(estimated_utility)]
+            propensity = 1.0
+
+        elif self.inference == 'policy':
+            # Option 3: sample from the learnt policy instead of brute force searching
+            x = torch.Tensor([estimated_CTR, value])
+            with torch.no_grad():
+                gamma, propensity = self.bidding_policy(x)
+                gamma = gamma.detach().item()
+
+        bid *= gamma
+        self.gammas.append(gamma)
+        self.propensities.append(propensity)
+        return bid
+
+    def update(self, contexts, values, bids, prices, outcomes, estimated_CTRs, won_mask, iteration, plot, figsize, fontsize, name):
+        # FALLBACK: if you lost every auction you participated in, your model collapsed
+        # Revert to not shading for 1 round, to collect data with informational value
+        if not won_mask.astype(np.uint8).sum():
+            self.model_initialised = False
+            print(f'! Fallback for {name}')
+            return
+
+        # Compute net utility
+        utilities = np.zeros_like(values)
+        utilities[won_mask] = (values[won_mask] * outcomes[won_mask]) - prices[won_mask]
+        utilities = torch.Tensor(utilities)
+
+        # Augment data with samples: if you shade 100%, you will lose
+        # If you won now, you would have also won if you bid higher
+        X = np.hstack((estimated_CTRs.reshape(-1,1), values.reshape(-1,1), np.array(self.gammas).reshape(-1, 1)))
+
+        X_aug_neg = X.copy()
+        X_aug_neg[:, -1] = 0.0
+
+        X_aug_pos = X[won_mask].copy()
+        X_aug_pos[:, -1] = np.maximum(X_aug_pos[:, -1], 1.0)
+
+        X = torch.Tensor(np.vstack((X, X_aug_neg)))
+
+        y = won_mask.astype(np.uint8).reshape(-1,1)
+        y = torch.Tensor(np.concatenate((y, np.zeros_like(y))))
+
+        # Fit the model
+        self.winrate_model.train()
+        epochs = 8192 * 4
+        lr = 3e-3
+        optimizer = torch.optim.Adam(self.winrate_model.parameters(), lr=lr, weight_decay=1e-6, amsgrad=True)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=100, min_lr=1e-7, factor=0.1, verbose=True)
+        criterion = torch.nn.BCELoss()
+        losses = []
+        best_epoch, best_loss = -1, np.inf
+        for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
+            optimizer.zero_grad()
+            pred_y = self.winrate_model(X)
+            loss = criterion(pred_y, y)
+            loss.backward()
+            optimizer.step()
+            losses.append(loss.item())
+            scheduler.step(loss)
+            if (best_loss - losses[-1]) > 1e-6:
+                best_epoch = epoch
+                best_loss = losses[-1]
+            elif epoch - best_epoch > 512:
+                print(f'Stopping at Epoch {epoch}')
+                break
+
+        losses = np.array(losses)
+
+        self.winrate_model.eval()
+        fig, ax = plt.subplots()
+        plt.title(f'{name}')
+        plt.plot(losses, label=r'P(win|$gamma$,x)')
+        plt.ylabel('Loss')
+        plt.legend()
+        fig.set_tight_layout(True)
+        # plt.show()
+
+        # Predict Utility -- \hat{u}
+        orig_features = torch.Tensor(np.hstack((estimated_CTRs.reshape(-1,1), values.reshape(-1,1), np.array(self.gammas).reshape(-1, 1))))
+        W = self.winrate_model(orig_features).squeeze().detach().numpy()
+        print('AUC predicting P(win):\t\t\t\t', roc_auc_score(won_mask.astype(np.uint8), W))
+
+        if self.inference == 'policy':
+            # Learn a policy to maximise E[U | bid] where bid ~ policy
+            X = torch.Tensor(np.hstack((estimated_CTRs.reshape(-1,1), values.reshape(-1,1))))
+
+            self.bidding_policy.train()
+            epochs = 8192 * 2
+            lr = 2e-3
+            optimizer = torch.optim.Adam(self.bidding_policy.parameters(), lr=lr, weight_decay=1e-6, amsgrad=True)
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=100, min_lr=1e-7, factor=0.1, verbose=True)
+            losses = []
+            best_epoch, best_loss = -1, np.inf
+            for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
+                #noisynet    
+                self.bidding_policy.sample_noise()
+
+                optimizer.zero_grad()
+                # Sample bid shading values
+                sampled_gamma, propensities = self.bidding_policy(X)
+
+                # Add them to input for win probability model
+                X_with_gamma = torch.hstack((X, sampled_gamma))
+
+                # Estimate utility for these sampled bid shading values
+                prob_win = self.winrate_model(X_with_gamma).squeeze()
+                values = X_with_gamma[:, 0].squeeze() * X_with_gamma[:, 1].squeeze()
+                prices = values * sampled_gamma.squeeze()
+
+                estimated_utility = -(prob_win * (values - prices)).mean()
+                estimated_utility.backward()
+                optimizer.step()
+
+                losses.append(estimated_utility.item())
+                scheduler.step(estimated_utility)
+                self.swag_policy.collect_model(self.bidding_policy)
+                if (best_loss - losses[-1]) > 1e-6:
+                    best_epoch = epoch
+                    best_loss = losses[-1]
+                elif epoch - best_epoch > 256:
+                    print(f'Stopping at Epoch {epoch}')
+                    break
+
+            losses = np.array(losses)
+            self.bidding_policy.eval()
+            fig, ax = plt.subplots()
+            plt.title(f'{name}')
+            plt.plot(losses, label=r'$\pi(\gamma)$')
+            plt.ylabel('- Estimated Expected Utility')
+            plt.legend()
+            fig.set_tight_layout(True)
+            #plt.show()
+        
+        
 
         self.model_initialised = True
 
@@ -336,13 +532,14 @@ class ValueLearningBidder(Bidder):
 class PolicyLearningBidder(Bidder):
     """ A bidder that estimates the optimal bid shading distribution via policy learning """
 
-    def __init__(self, rng, gamma_sigma, loss, init_gamma=1.0):
+    def __init__(self, rng, gamma_sigma, loss, init_gamma=1.0, noise=False):
         self.gamma_sigma = gamma_sigma
         self.prev_gamma = init_gamma
         self.gammas = []
         self.propensities = []
-        self.model = BidShadingContextualBandit(loss)
+        self.model = BidShadingContextualBandit(loss, noise=noise)
         self.model_initialised = False
+        self.noise = noise
         super(PolicyLearningBidder, self).__init__(rng)
 
     def bid(self, value, context, estimated_CTR):
@@ -394,6 +591,9 @@ class PolicyLearningBidder(Bidder):
         losses = []
         best_epoch, best_loss = -1, np.inf
         for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
+            #noisynet
+            if self.noise == True:
+                self.model.sample_noise()
             optimizer.zero_grad()  # Setting our stored gradients equal to zero
             loss = self.model.loss(X, gammas, propensities, utilities, importance_weight_clipping_eps=50.0)
             loss.backward()  # Computes the gradient of the given tensor w.r.t. the weights/bias
@@ -438,18 +638,131 @@ class PolicyLearningBidder(Bidder):
             self.gammas = self.gammas[-memory:]
             self.propensities = self.propensities[-memory:]
 
+class SWAG_PolicyLearningBidder(Bidder):
+    """ A bidder that estimates the optimal bid shading distribution via policy learning """
+
+    def __init__(self, rng, gamma_sigma, loss, init_gamma=1.0, noise=False):
+        self.gamma_sigma = gamma_sigma
+        self.prev_gamma = init_gamma
+        self.gammas = []
+        self.propensities = []
+        self.model = BidShadingContextualBandit(loss, noise=noise)
+        self.model_initialised = False
+        self.swag_policy = SWAG(self.model)
+        self.noise = noise
+        super(SWAG_PolicyLearningBidder, self).__init__(rng)
+
+    def bid(self, value, context, estimated_CTR):
+        # Compute the bid as expected value
+        bid = value * estimated_CTR
+        if not self.model_initialised:
+            # Option 1:
+            # Sample the bid shading factor 'gamma' from a Gaussian
+            gamma = self.rng.normal(self.prev_gamma, self.gamma_sigma)
+            normal_pdf = lambda g: np.exp(-((self.prev_gamma - g) / self.gamma_sigma)**2/2) / (self.gamma_sigma * np.sqrt(2 * np.pi))
+            propensity = normal_pdf(gamma)
+        else:
+            # Option 2:
+            # Sample from the contextual bandit
+            x = torch.Tensor([estimated_CTR, value])
+            self.swag_policy.sample(scale=0.1)
+            gamma, propensity = self.swag_policy(x)
+            gamma = torch.clip(gamma, 0.0, 1.0)
+
+        bid *= gamma.detach().item() if self.model_initialised else gamma
+        self.gammas.append(gamma)
+        self.propensities.append(propensity)
+        return bid
+
+    def update(self, contexts, values, bids, prices, outcomes, estimated_CTRs, won_mask, iteration, plot, figsize, fontsize, name):
+        # Compute net utility
+        utilities = np.zeros_like(values)
+        utilities[won_mask] = (values[won_mask] * outcomes[won_mask]) - prices[won_mask]
+        utilities = torch.Tensor(utilities)
+
+        # Extract shading factors to torch
+        gammas = torch.Tensor(self.gammas)
+
+        # Prepare features
+        X = torch.Tensor(np.hstack((estimated_CTRs.reshape(-1,1), values.reshape(-1,1))))
+
+        if not self.model_initialised:
+            self.model.initialise_policy(X, gammas)
+
+        # Ensure we don't have propensities that are rounded to zero
+        propensities = torch.clip(torch.Tensor(self.propensities), min=1e-15)
+
+        # Fit the model
+        self.model.train()
+        epochs = 8192 * 2
+        lr = 2e-3
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=lr, weight_decay=1e-4, amsgrad=True)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=100, min_lr=1e-8, factor=0.2, verbose=True)
+
+        losses = []
+        best_epoch, best_loss = -1, np.inf
+        for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
+            #noisynet
+            if self.noise == True:
+                self.model.sample_noise()
+            optimizer.zero_grad()  # Setting our stored gradients equal to zero
+            loss = self.model.loss(X, gammas, propensities, utilities, importance_weight_clipping_eps=50.0)
+            loss.backward()  # Computes the gradient of the given tensor w.r.t. the weights/bias
+            optimizer.step()  # Updates weights and biases with the optimizer (SGD)
+            losses.append(loss.item())
+            scheduler.step(loss)
+            # swag collect param
+            self.swag_policy.collect_model(self.model)
+
+            if (best_loss - losses[-1]) > 1e-6:
+                best_epoch = epoch
+                best_loss = losses[-1]
+            elif epoch - best_epoch > 512:
+                print(f'Stopping at Epoch {epoch}')
+                break
+
+        losses = np.array(losses)
+        if np.isnan(losses).any():
+            print('NAN DETECTED! in losses')
+            print(list(losses))
+            print(np.isnan(X.detach().numpy()).any(), X)
+            print(np.isnan(gammas.detach().numpy()).any(), gammas)
+            print(np.isnan(propensities.detach().numpy()).any(), propensities)
+            print(np.isnan(utilities.detach().numpy()).any(), utilities)
+            exit(1)
+
+        self.model.eval()
+        expected_utility = -self.model.loss(X, gammas, propensities, utilities, KL_weight=0.0).detach().numpy()
+        print('Expected utility:', expected_utility)
+
+        pred_gammas, _ = self.model(X)
+        pred_gammas = pred_gammas.detach().numpy()
+        print(name, 'Number of samples: ', X.shape)
+        print(name, 'Predicted Gammas: ', pred_gammas.min(), pred_gammas.max(), pred_gammas.mean())
+
+        self.model_initialised = True
+        self.model.model_initialised = True
+
+    def clear_logs(self, memory):
+        if not memory:
+            self.gammas = []
+            self.propensities = []
+        else:
+            self.gammas = self.gammas[-memory:]
+            self.propensities = self.propensities[-memory:]
 
 class DoublyRobustBidder(Bidder):
     """ A bidder that estimates the optimal bid shading distribution with a Doubly Robust Estimator """
 
-    def __init__(self, rng, gamma_sigma, init_gamma=1.0):
+    def __init__(self, rng, gamma_sigma, init_gamma=1.0, noise=False):
         self.gamma_sigma = gamma_sigma
         self.prev_gamma = init_gamma
         self.gammas = []
         self.propensities = []
         self.winrate_model = PyTorchWinRateEstimator()
-        self.bidding_policy = BidShadingContextualBandit(loss='Doubly Robust', winrate_model=self.winrate_model)
+        self.bidding_policy = BidShadingContextualBandit(loss='Doubly Robust', winrate_model=self.winrate_model, noise=noise)
         self.model_initialised = False
+        self.noise = noise
         super(DoublyRobustBidder, self).__init__(rng)
 
     def bid(self, value, context, estimated_CTR):
@@ -523,6 +836,9 @@ class DoublyRobustBidder(Bidder):
         losses = []
         best_epoch, best_loss = -1, np.inf
         for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
+            #noisynet    
+            if self.noise == True:
+                self.bidding_policy.sample_noise()
             optimizer.zero_grad()
             pred_y = self.winrate_model(X)
             loss = criterion(pred_y, y)
@@ -586,6 +902,200 @@ class DoublyRobustBidder(Bidder):
             optimizer.step()  # Updates weights and biases with the optimizer (SGD)
             losses.append(loss.item())
             scheduler.step(loss)
+
+            if (best_loss - losses[-1]) > 1e-6:
+                best_epoch = epoch
+                best_loss = losses[-1]
+            elif epoch - best_epoch > 512:
+                print(f'Stopping at Epoch {epoch}')
+                break
+
+        losses = np.array(losses)
+        if np.isnan(losses).any():
+            print('NAN DETECTED! in losses')
+            print(list(losses))
+            print(np.isnan(X.detach().numpy()).any(), X)
+            print(np.isnan(gammas.detach().numpy()).any(), gammas)
+            print(np.isnan(propensities.detach().numpy()).any(), propensities)
+            print(np.isnan(utilities.detach().numpy()).any(), utilities)
+            exit(1)
+
+        self.bidding_policy.eval()
+
+        pred_gammas, _ = self.bidding_policy(X)
+        pred_gammas = pred_gammas.detach().numpy()
+        print(name, 'Number of samples: ', X.shape)
+        print(name, 'Predicted Gammas: ', pred_gammas.min(), pred_gammas.max(), pred_gammas.mean())
+
+        self.model_initialised = True
+        self.bidding_policy.model_initialised = True
+
+    def clear_logs(self, memory):
+        if not memory:
+            self.gammas = []
+            self.propensities = []
+        else:
+            self.gammas = self.gammas[-memory:]
+            self.propensities = self.propensities[-memory:]
+
+
+class SWAG_DoublyRobustBidder(Bidder):
+    """ A bidder that estimates the optimal bid shading distribution with a Doubly Robust Estimator """
+
+    def __init__(self, rng, gamma_sigma, init_gamma=1.0, noise=False):
+        self.gamma_sigma = gamma_sigma
+        self.prev_gamma = init_gamma
+        self.gammas = []
+        self.propensities = []
+        self.winrate_model = PyTorchWinRateEstimator()
+        self.bidding_policy = BidShadingContextualBandit(loss='Doubly Robust', winrate_model=self.winrate_model)
+        self.swag_policy = SWAG(self.bidding_policy)
+        self.model_initialised = False
+        self.noise = noise
+        super(SWAG_DoublyRobustBidder, self).__init__(rng)
+    
+    def bid(self, value, context, estimated_CTR):
+        # Compute the bid as expected value
+        bid = value * estimated_CTR
+        if not self.model_initialised:
+            # Option 1:
+            # Sample the bid shading factor 'gamma' from a Gaussian
+            gamma = self.rng.normal(self.prev_gamma, self.gamma_sigma)
+            normal_pdf = lambda g: np.exp(-((self.prev_gamma - g) / self.gamma_sigma)**2/2) / (self.gamma_sigma * np.sqrt(2 * np.pi))
+            propensity = normal_pdf(gamma)
+        else:
+            # Option 2:
+            # Sample from the contextual bandit
+            x = torch.Tensor([estimated_CTR, value])
+            with torch.no_grad():
+                self.swag_policy.sample(scale=0.1)
+                gamma, propensity = self.swag_policy(x)
+                gamma = torch.clip(gamma, 0.0, 1.0)
+
+        bid *= gamma.detach().item() if self.model_initialised else gamma
+        self.gammas.append(gamma)
+        self.propensities.append(propensity)
+        return bid
+
+    def update(self, contexts, values, bids, prices, outcomes, estimated_CTRs, won_mask, iteration, plot, figsize, fontsize, name):
+        # Compute net utility
+        utilities = np.zeros_like(values)
+        utilities[won_mask] = (values[won_mask] * outcomes[won_mask]) - prices[won_mask]
+        # utilities = torch.Tensor(utilities)
+
+        ##############################
+        # 1. TRAIN UTILITY ESTIMATOR #
+        ##############################
+        gammas_numpy = np.array([g.detach().item() if self.model_initialised else g for g in self.gammas])
+        if self.model_initialised:
+            # Predict Utility -- \hat{u}
+            orig_features = torch.Tensor(np.hstack((estimated_CTRs.reshape(-1,1), values.reshape(-1,1), gammas_numpy.reshape(-1, 1))))
+            W = self.winrate_model(orig_features).squeeze().detach().numpy()
+            print('AUC predicting P(win):\t\t\t\t', roc_auc_score(won_mask.astype(np.uint8), W))
+
+            V = estimated_CTRs * values
+            P = estimated_CTRs * values * gammas_numpy
+            estimated_utilities = W * (V - P)
+
+            errors = estimated_utilities - utilities
+            print('Estimated Utility\t Mean Error:\t\t\t', errors.mean())
+            print('Estimated Utility\t Mean Absolute Error:\t', np.abs(errors).mean())
+
+        # Augment data with samples: if you shade 100%, you will lose
+        # If you won now, you would have also won if you bid higher
+        X = np.hstack((estimated_CTRs.reshape(-1,1), values.reshape(-1,1), gammas_numpy.reshape(-1, 1)))
+
+        X_aug_neg = X.copy()
+        X_aug_neg[:, -1] = 0.0
+
+        X_aug_pos = X[won_mask].copy()
+        X_aug_pos[:, -1] = np.maximum(X_aug_pos[:, -1], 1.0)
+
+        X = torch.Tensor(np.vstack((X, X_aug_neg)))
+
+        y = won_mask.astype(np.uint8).reshape(-1,1)
+        y = torch.Tensor(np.concatenate((y, np.zeros_like(y))))
+
+        # Fit the model
+        self.winrate_model.train()
+        epochs = 8192 * 4
+        lr = 3e-3
+        optimizer = torch.optim.Adam(self.winrate_model.parameters(), lr=lr, weight_decay=1e-6, amsgrad=True)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=256, min_lr=1e-7, factor=0.2, verbose=True)
+        criterion = torch.nn.BCELoss()
+        losses = []
+        best_epoch, best_loss = -1, np.inf
+        for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
+            #noisynet
+            if self.noise == True:    
+                self.bidding_policy.sample_noise()
+            optimizer.zero_grad()
+            pred_y = self.winrate_model(X)
+            loss = criterion(pred_y, y)
+            loss.backward()
+            optimizer.step()
+            losses.append(loss.item())
+            scheduler.step(loss)
+
+            if (best_loss - losses[-1]) > 1e-6:
+                best_epoch = epoch
+                best_loss = losses[-1]
+            elif epoch - best_epoch > 1024:
+                print(f'Stopping at Epoch {epoch}')
+                break
+
+        losses = np.array(losses)
+
+        self.winrate_model.eval()
+
+        # Predict Utility -- \hat{u}
+        orig_features = torch.Tensor(np.hstack((estimated_CTRs.reshape(-1,1), values.reshape(-1,1), gammas_numpy.reshape(-1, 1))))
+        W = self.winrate_model(orig_features).squeeze().detach().numpy()
+        print('AUC predicting P(win):\t\t\t\t', roc_auc_score(won_mask.astype(np.uint8), W))
+
+        V = estimated_CTRs * values
+        P = estimated_CTRs * values * gammas_numpy
+        estimated_utilities = W * (V - P)
+
+        errors = estimated_utilities - utilities
+        print('Estimated Utility\t Mean Error:\t\t\t', errors.mean())
+        print('Estimated Utility\t Mean Absolute Error:\t', np.abs(errors).mean())
+
+        ##############################
+        # 2. TRAIN DOUBLY ROBUST POLICY #
+        ##############################
+        utilities = torch.Tensor(utilities)
+        estimated_utilities = torch.Tensor(estimated_utilities)
+        gammas = torch.Tensor(self.gammas)
+
+        # Prepare features
+        X = torch.Tensor(np.hstack((estimated_CTRs.reshape(-1,1), values.reshape(-1,1))))
+
+        if not self.model_initialised:
+            self.bidding_policy.initialise_policy(X, gammas)
+
+        # Ensure we don't have propensities that are rounded to zero
+        propensities = torch.clip(torch.Tensor(self.propensities), min=1e-15)
+
+        # Fit the model
+        self.bidding_policy.train()
+        epochs = 8192 * 4
+        lr = 7e-3
+        optimizer = torch.optim.Adam(self.bidding_policy.parameters(), lr=lr, weight_decay=1e-4, amsgrad=True)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=100, min_lr=1e-8, factor=0.2, threshold=5e-3, verbose=True)
+
+        losses = []
+        best_epoch, best_loss = -1, np.inf
+        for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
+            optimizer.zero_grad()  # Setting our stored gradients equal to zero
+            loss = self.bidding_policy.loss(X, gammas, propensities, utilities, utility_estimates=estimated_utilities, winrate_model=self.winrate_model, importance_weight_clipping_eps=50.0)
+            loss.backward()  # Computes the gradient of the given tensor w.r.t. the weights/bias
+            optimizer.step()  # Updates weights and biases with the optimizer (SGD)
+            losses.append(loss.item())
+            scheduler.step(loss)
+
+            # swag collect param
+            self.swag_policy.collect_model(self.bidding_policy)
 
             if (best_loss - losses[-1]) > 1e-6:
                 best_epoch = epoch

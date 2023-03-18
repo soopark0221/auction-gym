@@ -5,7 +5,9 @@ from numba import jit
 from scipy.optimize import minimize
 from torch.nn import functional as F
 from tqdm import tqdm
-
+from torch.nn import init, Parameter
+import math
+from torch.autograd import Variable
 
 @jit(nopython=True)
 def sigmoid(x):
@@ -48,6 +50,7 @@ class PyTorchLogisticRegression(torch.nn.Module):
         self.prev_iter_m = self.m.detach().clone()
 
 
+
 class PyTorchWinRateEstimator(torch.nn.Module):
     def __init__(self):
         super(PyTorchWinRateEstimator, self).__init__()
@@ -61,20 +64,53 @@ class PyTorchWinRateEstimator(torch.nn.Module):
     def forward(self, x):
         return self.model(x)
 
+class NoisyLinear(torch.nn.Linear):
+    def __init__(self, in_features, out_features, sigma_init=0.017, bias=True):
+        super(NoisyLinear, self).__init__(in_features, out_features, bias=True)  # TODO: Adapt for no bias
+        # µ^w and µ^b reuse self.weight and self.bias
+        self.sigma_init = sigma_init
+        self.sigma_weight = Parameter(torch.Tensor(out_features, in_features))  # σ^w
+        self.sigma_bias = Parameter(torch.Tensor(out_features))  # σ^b
+        self.register_buffer('epsilon_weight', torch.zeros(out_features, in_features))
+        self.register_buffer('epsilon_bias', torch.zeros(out_features))
+        self.reset_parameters()
 
+    def reset_parameters(self):
+        if hasattr(self, 'sigma_weight'):  # Only init after all params added (otherwise super().__init__() fails)
+            init.uniform(self.weight, -math.sqrt(3 / self.in_features), math.sqrt(3 / self.in_features))
+            init.uniform(self.bias, -math.sqrt(3 / self.in_features), math.sqrt(3 / self.in_features))
+            init.constant(self.sigma_weight, self.sigma_init)
+            init.constant(self.sigma_bias, self.sigma_init)
+
+    def forward(self, input):
+        return F.linear(input, self.weight + self.sigma_weight * Variable(self.epsilon_weight), self.bias + self.sigma_bias * Variable(self.epsilon_bias))
+
+    def sample_noise(self):
+        self.epsilon_weight = torch.randn(self.out_features, self.in_features)
+        self.epsilon_bias = torch.randn(self.out_features)
+
+    def remove_noise(self):
+        self.epsilon_weight = torch.zeros(self.out_features, self.in_features)
+        self.epsilon_bias = torch.zeros(self.out_features)
+        
 class BidShadingPolicy(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, noise=False):
         super(BidShadingPolicy, self).__init__()
         # Input: P(click), value
         # Output: mu, sigma for Gaussian bid shading distribution
         # Learnt to maximise E[P(win|gamma)*(value - price)] when gamma ~ N(mu, sigma)
         self.shared_linear = torch.nn.Linear(2, 2, bias=True)
+        self.noise = noise
+        if noise == False:
+            self.mu_linear_hidden = torch.nn.Linear(2, 2)
+            self.mu_linear_out = torch.nn.Linear(2, 1)
 
-        self.mu_linear_hidden = torch.nn.Linear(2, 2)
-        self.mu_linear_out = torch.nn.Linear(2, 1)
+            self.sigma_linear_hidden = torch.nn.Linear(2, 2)
+            self.sigma_linear_out = torch.nn.Linear(2, 1)
+        else:
+            self.mu_linear_out = NoisyLinear(2, 1)
+            self.sigma_linear_out = NoisyLinear(2, 1)
 
-        self.sigma_linear_hidden = torch.nn.Linear(2, 2)
-        self.sigma_linear_out = torch.nn.Linear(2, 1)
         self.eval()
 
         self.min_sigma = 1e-2
@@ -89,24 +125,47 @@ class BidShadingPolicy(torch.nn.Module):
         sampled_value = torch.clip(sampled_value, min=0.0, max=1.0)
         return sampled_value, propensity
 
+    def sample_noise(self):
+        if self.noise:
+            self.mu_linear_out.sample_noise()
+            self.sigma_linear_out.sample_noise()
+
+    def remove_noise(self):
+        if self.noise:
+            self.sigma_linear_out.remove_noise()
+            self.mu_linear_out.remove_noise()
 
 class BidShadingContextualBandit(torch.nn.Module):
-    def __init__(self, loss, winrate_model=None):
+    def __init__(self, loss, winrate_model=None, noise=False):
         super(BidShadingContextualBandit, self).__init__()
 
         self.shared_linear = torch.nn.Linear(2, 2, bias=True)
+        self.noise = noise
+        if self.noise == False:
+            self.mu_linear_out = torch.nn.Linear(2, 1)
+            self.sigma_linear_out = torch.nn.Linear(2, 1)
+        else:
+            self.mu_linear_out = NoisyLinear(2, 1)
+            self.sigma_linear_out = NoisyLinear(2, 1)
 
-        self.mu_linear_out = torch.nn.Linear(2, 1)
-
-        self.sigma_linear_out = torch.nn.Linear(2, 1)
         self.eval()
 
         self.min_sigma = 1e-2
 
         self.loss_name = loss
-
+        print(f' loss is {loss}')
         self.model_initialised = False
 
+    def sample_noise(self):
+        if self.noise:
+            self.mu_linear_out.sample_noise()
+            self.sigma_linear_out.sample_noise()
+
+    def remove_noise(self):
+        if self.noise:
+            self.sigma_linear_out.remove_noise()
+            self.mu_linear_out.remove_noise()
+    
     def initialise_policy(self, observed_contexts, observed_gammas):
         # The first time, train the policy to imitate the logging policy
         self.train()

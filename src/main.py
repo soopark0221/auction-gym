@@ -77,17 +77,19 @@ def parse_config(path):
 def instantiate_agents(rng, agent_configs, agents2item_values, agents2items):
     # Store agents to be re-instantiated in subsequent runs
     # Set up agents
+    noisynet = False
+    if args.expl == 'NoisyNet':
+        noisynet = True
     agents = [
         Agent(rng=rng,
               name=agent_config['name'],
               num_items=agent_config['num_items'],
               item_values=agents2item_values[agent_config['name']],
               allocator=eval(f"{agent_config['allocator']['type']}(rng=rng{parse_kwargs(agent_config['allocator']['kwargs'])})"),
-              bidder=eval(f"{agent_config['bidder']['type']}(rng=rng{parse_kwargs(agent_config['bidder']['kwargs'])})"),
+              bidder=eval(f"{agent_config['bidder']['type']}(rng=rng{parse_kwargs(agent_config['bidder']['kwargs'])},noise={noisynet})"),
               memory=(0 if 'memory' not in agent_config.keys() else agent_config['memory']))
         for agent_config in agent_configs
     ]
-
     for agent in agents:
         if isinstance(agent.allocator, OracleAllocator):
             agent.allocator.update_item_embeddings(agents2items[agent.name])
@@ -139,7 +141,7 @@ def simulation_run():
             agent2CTR_RMSE[agent.name].append(agent.get_CTR_RMSE())
             agent2CTR_bias[agent.name].append(agent.get_CTR_bias())
 
-            if isinstance(agent.bidder, PolicyLearningBidder) or isinstance(agent.bidder, DoublyRobustBidder):
+            if isinstance(agent.bidder, PolicyLearningBidder) or isinstance(agent.bidder, DoublyRobustBidder) or isinstance(agent.bidder, SWAG_DoublyRobustBidder):
                 agent2gamma[agent.name].append(torch.mean(torch.Tensor(agent.bidder.gammas)).detach().item())
             elif not agent.bidder.truthful:
                 agent2gamma[agent.name].append(np.mean(agent.bidder.gammas))
@@ -156,13 +158,20 @@ def simulation_run():
 
 if __name__ == '__main__':
     # Parse commandline arguments
+    import re 
     parser = argparse.ArgumentParser()
     parser.add_argument('config', type=str, help='Path to experiment configuration file')
+    parser.add_argument('--expl', default='NA', choices=['NA','SWAG','NoisyNet','Simple'])
     args = parser.parse_args()
 
     # Parse configuration file
     rng, config, agent_configs, agents2items, agents2item_values, num_runs, max_slots, embedding_size, embedding_var, obs_embedding_size = parse_config(args.config)
-
+    expl= args.expl
+    method = re.split('[/ .]', args.config)[-2]
+    if embedding_size == obs_embedding_size:
+        observable = 'FO'
+    else: 
+        observable = 'PO'
     # Plotting config
     FIGSIZE = (8, 5)
     FONTSIZE = 14
@@ -188,6 +197,9 @@ if __name__ == '__main__':
         agents = instantiate_agents(rng, agent_configs, agents2item_values, agents2items)
         auction, num_iter, rounds_per_iter, output_dir = instantiate_auction(rng, config, agents2items, agents2item_values, agents, max_slots, embedding_size, embedding_var, obs_embedding_size)
 
+        # change output_dir 
+        output_dir = f'results/{expl}/{observable}/{method}/'
+        
         # Placeholders for summary statistics per run
         agent2net_utility = defaultdict(list)
         agent2gross_utility = defaultdict(list)
