@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+import torch.nn as nn
 from numba import jit
 from scipy.optimize import minimize
 from torch.nn import functional as F
@@ -10,6 +11,39 @@ from tqdm import tqdm
 @jit(nopython=True)
 def sigmoid(x):
     return 1.0 / (1.0 + np.exp(-x))
+
+class BayesianLinear(nn.Module):
+    def __init__(self, in_features, out_features):
+        super().__init__()
+        self.input_dim = in_features
+        self.output_dim = out_features
+        
+        self.weight_mu = nn.Parameter(torch.Tensor(out_features, in_features))
+        self.weight_rho = nn.Parameter(torch.Tensor(out_features, in_features))
+        
+        self.bias_mu = nn.Parameter(torch.Tensor(out_features))
+        self.bias_rho = nn.Parameter(torch.Tensor(out_features))
+
+    def forward(self, input, sample=False):
+        if self.training or sample:
+            weight_sigma = torch.log1p(self.weight_rho)
+            bias_sigma = torch.log1p(self.bias_rho)
+            weight = self.weight_mu + weight_sigma * torch.randn(self.weight_mu.size())
+            bias = self.bias_mu + bias_sigma * torch.randn(self.bias_mu.size())
+        else:
+            weight = self.weight_mu
+            bias = self.bias_mu
+
+        return F.linear(input, weight, bias)
+    
+    def KL_div(self, prior_sigma):
+        weight_sigma = torch.log1p(self.weight_rho)
+        bias_sigma = torch.log1p(self.bias_rho)
+        d = self.weight_mu.nelement() + self.bias_mu.nelement()
+        return 0.5*(-torch.log(weight_sigma).sum() -torch.log(bias_sigma).sum() + (torch.sum(weight_sigma)+torch.sum(bias_sigma)) / prior_sigma \
+                + (torch.sum(self.weight_mu**2) + torch.sum(self.bias_mu**2)) / prior_sigma - d + d*np.log(prior_sigma))
+
+
 
 # This is an implementation of Algorithm 3 (Regularised Bayesian Logistic Regression with a Laplace Approximation)
 # from "An Empirical Evaluation of Thompson Sampling" by Olivier Chapelle & Lihong Li
@@ -49,26 +83,77 @@ class PyTorchLogisticRegression(torch.nn.Module):
 
 
 class PyTorchWinRateEstimator(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, context_dim):
         super(PyTorchWinRateEstimator, self).__init__()
         # Input  P(click), the value, and the bid shading factor
         self.model = torch.nn.Sequential(
-            torch.nn.Linear(3, 1, bias=True),
+            torch.nn.Linear(context_dim+4, 1, bias=True),
             torch.nn.Sigmoid()
         )
         self.eval()
 
     def forward(self, x):
         return self.model(x)
+    
+class NeuralWinRateEstimator(nn.Module):
+    def __init__(self, context_dim):
+        super(NeuralWinRateEstimator, self).__init__()
+        self.linear1 = nn.Linear(context_dim+4,16)
+        self.linear2 = nn.Linear(16,1)
+        self.metric = nn.BCEWithLogitsLoss()
+        self.eval()
+
+    def forward(self, x, sample=False):
+        return torch.sigmoid(self.linear2(self.linear1(x)))
+    
+    def loss(self, x, y):
+        logits = self.linear2(self.linear1(x))
+        return self.metric(logits, y)
+    
+class BBBWinRateEstimator(nn.Module):
+    def __init__(self, context_dim):
+        super(BBBWinRateEstimator, self).__init__()
+        self.linear1 = BayesianLinear(context_dim+4,16)
+        self.linear2 = BayesianLinear(16,1)
+        self.metric = nn.BCEWithLogitsLoss()
+        self.eval()
+
+    def forward(self, x, sample=False):
+        x = self.linear1(x,sample)
+        return torch.sigmoid(self.linear2(x, sample))
+    
+    def loss(self, x, y, batch_size, sample_num):
+        loss = self.linear1.KL_div(1.0)/batch_size + self.linear2.KL_div(1.0)/batch_size
+        for _ in range(sample_num):
+            logits = self.linear2(self.linear1(x))
+            loss += self.metric(logits.squeeze(), y.squeeze())/sample_num
+        return loss
+    
+class MCDropoutWinRateEstimator(nn.Module):
+    def __init__(self, context_dim):
+        super().__init__()
+        self.ffn = nn.Sequential(*[
+            nn.Linear(context_dim+4,16),
+            nn.Dropout(0.8),
+            nn.Linear(16,1)])
+        self.metric = nn.BCEWithLogitsLoss()
+        self.train()
+    
+    def forward(self, x):
+        return torch.sigmoid(self.ffn(x))
+    
+    def loss(self, x, y):
+        logits = self.ffn(x)
+        return self.metric(logits, y)
 
 
 class BidShadingPolicy(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, context_dim):
         super(BidShadingPolicy, self).__init__()
-        # Input: P(click), value
+        # Input: context, P(click), value
         # Output: mu, sigma for Gaussian bid shading distribution
         # Learnt to maximise E[P(win|gamma)*(value - price)] when gamma ~ N(mu, sigma)
-        self.shared_linear = torch.nn.Linear(2, 2, bias=True)
+        self.shared_linear = torch.nn.Linear(context_dim + 3, 2, bias=True)
 
         self.mu_linear_hidden = torch.nn.Linear(2, 2)
         self.mu_linear_out = torch.nn.Linear(2, 1)
@@ -91,10 +176,10 @@ class BidShadingPolicy(torch.nn.Module):
 
 
 class BidShadingContextualBandit(torch.nn.Module):
-    def __init__(self, loss, winrate_model=None):
+    def __init__(self, loss, context_dim):
         super(BidShadingContextualBandit, self).__init__()
 
-        self.shared_linear = torch.nn.Linear(2, 2, bias=True)
+        self.shared_linear = torch.nn.Linear(context_dim+3, 2, bias=True)
 
         self.mu_linear_out = torch.nn.Linear(2, 1)
 
@@ -110,38 +195,45 @@ class BidShadingContextualBandit(torch.nn.Module):
     def initialise_policy(self, observed_contexts, observed_gammas):
         # The first time, train the policy to imitate the logging policy
         self.train()
-        epochs = 8192 * 2
+        epochs = 10000
         lr = 1e-3
         optimizer = torch.optim.Adam(self.parameters(), lr=lr, weight_decay=1e-4, amsgrad=True)
-
         criterion = torch.nn.MSELoss()
         losses = []
         best_epoch, best_loss = -1, np.inf
+        batch_size = 128
+        batch_num = int(8192/128)
+
         for epoch in tqdm(range(int(epochs)), desc=f'Initialising Policy'):
-            optimizer.zero_grad()  # Setting our stored gradients equal to zero
-            predicted_mu_gammas = torch.nn.Softplus()(self.mu_linear_out(torch.nn.Softplus()(self.shared_linear(observed_contexts))))
-            predicted_sigma_gammas = torch.nn.Softplus()(self.sigma_linear_out(torch.nn.Softplus()(self.shared_linear(observed_contexts))))
-            loss = criterion(predicted_mu_gammas.squeeze(), observed_gammas) + criterion(predicted_sigma_gammas.squeeze(), torch.ones_like(observed_gammas) * .05)
-            loss.backward()  # Computes the gradient of the given tensor w.r.t. the weights/bias
-            optimizer.step()  # Updates weights and biases with the optimizer (SGD)
-            losses.append(loss.item())
+            epoch_loss = 0
+            for i in range(batch_num):
+                contexts = observed_contexts[i:i+batch_num]
+                gammas = observed_gammas[i:i+batch_num]
+                optimizer.zero_grad()
+                predicted_mu_gammas = torch.nn.Softplus()(self.mu_linear_out(torch.nn.Softplus()(self.shared_linear(contexts))))
+                predicted_sigma_gammas = torch.nn.Softplus()(self.sigma_linear_out(torch.nn.Softplus()(self.shared_linear(contexts))))
+                loss = criterion(predicted_mu_gammas.squeeze(), observed_gammas)/batch_num + criterion(predicted_sigma_gammas.squeeze(), torch.ones_like(gammas) * .05)/batch_num
+                loss.backward()  # Computes the gradient of the given tensor w.r.t. the weights/bias
+                optimizer.step()  # Updates weights and biases with the optimizer (SGD)
+                epoch_loss += loss.item()
+            losses.append(epoch_loss)
             if (best_loss - losses[-1]) > 1e-6:
                 best_epoch = epoch
                 best_loss = losses[-1]
-            elif epoch - best_epoch > 512:
+            elif epoch - best_epoch > 100:
                 print(f'Stopping at Epoch {epoch}')
                 break
 
-        fig, ax = plt.subplots()
-        plt.title(f'Initialising policy')
-        plt.plot(losses, label=r'Loss')
-        plt.ylabel('MSE with logging policy')
-        plt.legend()
-        fig.set_tight_layout(True)
+        # fig, ax = plt.subplots()
+        # plt.title(f'Initialising policy')
+        # plt.plot(losses, label=r'Loss')
+        # plt.ylabel('MSE with logging policy')
+        # plt.legend()
+        # fig.set_tight_layout(True)
         #plt.show()
 
-        print('Predicted mu Gammas: ', predicted_mu_gammas.min(), predicted_mu_gammas.max(), predicted_mu_gammas.mean())
-        print('Predicted sigma Gammas: ', predicted_sigma_gammas.min(), predicted_sigma_gammas.max(), predicted_sigma_gammas.mean())
+        # print('Predicted mu Gammas: ', predicted_mu_gammas.min(), predicted_mu_gammas.max(), predicted_mu_gammas.mean())
+        # print('Predicted sigma Gammas: ', predicted_sigma_gammas.min(), predicted_sigma_gammas.max(), predicted_sigma_gammas.mean())
 
     def forward(self, x):
         x = self.shared_linear(x)
@@ -164,7 +256,7 @@ class BidShadingContextualBandit(torch.nn.Module):
         # Compute the density for gamma under a Gaussian centered at mu -- prevent overflow
         return mu, sigma, torch.clip(torch.exp(-((mu - gamma) / sigma)**2/2) / (sigma * np.sqrt(2 * np.pi)), min=1e-30)
 
-    def loss(self, observed_context, observed_gamma, logging_propensity, utility, utility_estimates=None, winrate_model=None, KL_weight=5e-2, importance_weight_clipping_eps=torch.inf):
+    def loss(self, observed_context, observed_gamma, logging_propensity, utility, utility_estimates=None, winrate_model=None, KL_weight=5e-2, importance_weight_clipping_eps=np.inf):
 
         mean_gamma_target, sigma_gamma_target, target_propensities = self.normal_pdf(observed_context, observed_gamma)
 

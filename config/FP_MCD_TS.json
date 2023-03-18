@@ -1,0 +1,29 @@
+{
+    "random_seed": 0,
+    "num_runs": 3,
+    "num_iter" : 15,
+    "rounds_per_iter": 8192,
+    "num_participants_per_round": 2,
+    "embedding_size": 5,
+    "embedding_var": 1.0,
+    "obs_embedding_size": 5,
+    "allocation": "FirstPrice",
+    "agents": [ {
+      "name": "BBB",
+      "num_copies": 3,
+      "num_items": 12,
+        "allocator": {
+          "type": "PyTorchLogisticRegressionAllocator",
+          "kwargs": {"embedding_size": 5, "num_items": 12}
+        },
+        "bidder": {
+            "type": "MCDropoutBidder",
+            "kwargs": {
+              "gamma_mu": 1.0,
+              "gamma_sigma": 0.02,
+              "context_dim": 5
+            }
+      }
+    }],
+    "output_dir": "results/FP_MCD_TS_FO/"
+  }

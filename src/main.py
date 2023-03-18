@@ -3,11 +3,13 @@ import json
 import matplotlib.pyplot as plt
 import numpy as np
 import os
+import shutil
 import pandas as pd
 import seaborn as sns
 from collections import defaultdict
 from copy import deepcopy
 from tqdm import tqdm
+import time
 
 from Agent import Agent
 from AuctionAllocation import * # FirstPrice, SecondPrice
@@ -221,9 +223,11 @@ if __name__ == '__main__':
 
         run2auction_revenue[run] = auction_revenue
 
-    # Make sure we can write results
+    output_dir = output_dir + time.strftime('%y%m%d-%H%M%S')
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
+    
+    shutil.copy(args.config, os.path.join(output_dir, 'config.json'))
 
     def measure_per_agent2df(run2agent2measure, measure_name):
         df_rows = {'Run': [], 'Agent': [], 'Iteration': [], measure_name: []}

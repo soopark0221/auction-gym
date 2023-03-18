@@ -19,8 +19,8 @@
       "bidder": {
           "type": "PolicyLearningBidder",
           "kwargs": {
-            "gamma_sigma":  0.02,
-            "init_gamma": 1.0,
+            "gamma_mu":  1.0,
+            "gamma_sigma": 0.02,
             "loss": "\"PPO\""
           }
     }
