@@ -389,7 +389,8 @@ class SWAG_ValueLearningBidder(Bidder):
             # Option 3: sample from the learnt policy instead of brute force searching
             x = torch.Tensor([estimated_CTR, value])
             with torch.no_grad():
-                gamma, propensity = self.bidding_policy(x)
+                self.swag_policy.sample(scale=0.5)
+                gamma, propensity = self.swag_policy(x)
                 gamma = gamma.detach().item()
 
         bid *= gamma
@@ -665,7 +666,7 @@ class SWAG_PolicyLearningBidder(Bidder):
             # Option 2:
             # Sample from the contextual bandit
             x = torch.Tensor([estimated_CTR, value])
-            self.swag_policy.sample(scale=0.1)
+            self.swag_policy.sample(scale=0.5)
             gamma, propensity = self.swag_policy(x)
             gamma = torch.clip(gamma, 0.0, 1.0)
 
@@ -836,9 +837,6 @@ class DoublyRobustBidder(Bidder):
         losses = []
         best_epoch, best_loss = -1, np.inf
         for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
-            #noisynet    
-            if self.noise == True:
-                self.bidding_policy.sample_noise()
             optimizer.zero_grad()
             pred_y = self.winrate_model(X)
             loss = criterion(pred_y, y)
@@ -896,6 +894,9 @@ class DoublyRobustBidder(Bidder):
         losses = []
         best_epoch, best_loss = -1, np.inf
         for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
+            #noisynet    
+            if self.noise == True:
+                self.bidding_policy.sample_noise()
             optimizer.zero_grad()  # Setting our stored gradients equal to zero
             loss = self.bidding_policy.loss(X, gammas, propensities, utilities, utility_estimates=estimated_utilities, winrate_model=self.winrate_model, importance_weight_clipping_eps=50.0)
             loss.backward()  # Computes the gradient of the given tensor w.r.t. the weights/bias
@@ -968,7 +969,7 @@ class SWAG_DoublyRobustBidder(Bidder):
             # Sample from the contextual bandit
             x = torch.Tensor([estimated_CTR, value])
             with torch.no_grad():
-                self.swag_policy.sample(scale=0.1)
+                self.swag_policy.sample(scale=0.5)
                 gamma, propensity = self.swag_policy(x)
                 gamma = torch.clip(gamma, 0.0, 1.0)
 
@@ -1026,9 +1027,6 @@ class SWAG_DoublyRobustBidder(Bidder):
         losses = []
         best_epoch, best_loss = -1, np.inf
         for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
-            #noisynet
-            if self.noise == True:    
-                self.bidding_policy.sample_noise()
             optimizer.zero_grad()
             pred_y = self.winrate_model(X)
             loss = criterion(pred_y, y)
@@ -1087,6 +1085,9 @@ class SWAG_DoublyRobustBidder(Bidder):
         losses = []
         best_epoch, best_loss = -1, np.inf
         for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
+            #noisynet
+            if self.noise == True:    
+                self.bidding_policy.sample_noise()
             optimizer.zero_grad()  # Setting our stored gradients equal to zero
             loss = self.bidding_policy.loss(X, gammas, propensities, utilities, utility_estimates=estimated_utilities, winrate_model=self.winrate_model, importance_weight_clipping_eps=50.0)
             loss.backward()  # Computes the gradient of the given tensor w.r.t. the weights/bias

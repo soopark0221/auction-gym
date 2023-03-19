@@ -141,7 +141,7 @@ def simulation_run():
             agent2CTR_RMSE[agent.name].append(agent.get_CTR_RMSE())
             agent2CTR_bias[agent.name].append(agent.get_CTR_bias())
 
-            if isinstance(agent.bidder, PolicyLearningBidder) or isinstance(agent.bidder, DoublyRobustBidder) or isinstance(agent.bidder, SWAG_DoublyRobustBidder):
+            if isinstance(agent.bidder, PolicyLearningBidder) or isinstance(agent.bidder, DoublyRobustBidder) or isinstance(agent.bidder, SWAG_DoublyRobustBidder) or isinstance(agent.bidder, SWAG_PolicyLearningBidder):
                 agent2gamma[agent.name].append(torch.mean(torch.Tensor(agent.bidder.gammas)).detach().item())
             elif not agent.bidder.truthful:
                 agent2gamma[agent.name].append(np.mean(agent.bidder.gammas))

@@ -74,7 +74,7 @@ class SWAG(torch.nn.Module):
         if target_model == None:
             target_model = self.base_model
         self.set_weights(target_model, sample_w, self.model_device)
-        return sample
+        return sample_w
 
     def get_space(self, export_cov_factor=True):
         mean, variance = self._get_mean_and_variance()
