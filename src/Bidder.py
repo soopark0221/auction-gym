@@ -647,11 +647,12 @@ class DoublyRobustBidder(Bidder):
 class ValueSamplingBidder(Bidder):
     """ A bidder that estimates the utility with its uncertainty via Bayes by Backprop """
 
-    def __init__(self, rng, gamma_mu, gamma_sigma, context_dim, method, epsilon=0.1, noise=0.02):
+    def __init__(self, rng, gamma_mu, gamma_sigma, context_dim, method, epsilon=0.1, noise=0.02, prior_var=1.0):
         self.gamma_mu = gamma_mu
         self.gamma_sigma = gamma_sigma
         self.context_dim = context_dim + 1
-        assert method in ['Epsilon-greedy', 'Gaussian Noise', 'Bayes by Backprop', 'MC Dropout']
+        assert method in ['Epsilon-greedy', 'Gaussian Noise', 'Bayes by Backprop', 'MC Dropout',
+                          'NoisyNet']
         self.method = method
         self.gammas = []
         if method=='Epsilon-greedy':
@@ -662,8 +663,11 @@ class ValueSamplingBidder(Bidder):
             self.noise = noise
         elif method=='Bayes by Backprop':
             self.winrate_model = BBBWinRateEstimator(context_dim)
+            self.prior_var = prior_var
         elif method=='MC Dropout':
             self.winrate_model = MCDropoutWinRateEstimator(context_dim)
+        elif method=='NoisyNet':
+            self.winrate_model = NoisyNetWinRateEstimator(context_dim)
         self.model_initialised = False
         super(ValueSamplingBidder, self).__init__(rng)
 
@@ -680,7 +684,7 @@ class ValueSamplingBidder(Bidder):
             x = torch.Tensor(np.hstack((np.tile(context, ((n_values_search, 1))), np.tile(estimated_CTR, (n_values_search, 1)),
                                         np.tile(value, (n_values_search, 1)), gamma_grid.reshape(-1,1))))
 
-            if self.method=='Bayes by Backprop':
+            if self.method=='Bayes by Backprop' or self.method=='NoisyNet':
                 prob_win = self.winrate_model(x, True).detach().numpy().ravel()
             elif self.method=='MC Dropout':
                 with torch.no_grad():
@@ -751,7 +755,9 @@ class ValueSamplingBidder(Bidder):
                 optimizer.zero_grad()
 
                 if self.method=='Bayes by Backprop':
-                    loss = self.winrate_model.loss(X_mini, y_mini, batch_size, 2)/batch_num
+                    loss = self.winrate_model.loss(X_mini, y_mini, batch_size, 2, self.prior_var)/batch_num
+                elif self.method=='NoisyNet':
+                    loss = self.winrate_model.loss(X_mini, y_mini, 2)/batch_num
                 else:
                     loss = self.winrate_model.loss(X_mini, y_mini)/batch_num
                 loss.backward()
@@ -791,3 +797,198 @@ class ValueSamplingBidder(Bidder):
         else:
             self.gammas = self.gammas[-memory:]
 
+class StochasticPolicyBidder(Bidder):
+
+    def __init__(self, rng, gamma_mu, gamma_sigma, context_dim, learning_object, exploration_method, use_WIS=True):
+        self.gamma_mu = gamma_mu
+        self.gamma_sigma = gamma_sigma
+        self.context_dim = context_dim + 1
+        self.gammas = []
+        self.propensities = []
+
+        assert learning_object in ['IS', 'Actor-critic', 'DR']
+        self.learning_object = learning_object
+        # Do we need a value estimator?
+        if self.learning_object=='Actor-critic' or self.learning_object=='DR':
+            self.winrate_model = PyTorchWinRateEstimator()
+        # Vanilla IS or weighted IS?
+        if self.learning_object=='IS' or self.learning_object=='DR':
+            self.use_WIS = use_WIS
+
+        assert exploration_method in ['Entropy Regularization', 'NoisyNet', 'Bayes by Backprop', 'MC Dropout']
+        self.exploration_method = exploration_method
+        if self.exploration_method=='NoisyNet' or self.exploration_method=='Bayes by Backprop':
+            self.bidding_policy = BayesianPolicy(context_dim)
+        self.bidding_policy = BidShadingContextualBandit(loss='Doubly Robust', winrate_model=self.winrate_model)
+        self.model_initialised = False
+        super(StochasticPolicyBidder, self).__init__(rng)
+
+    def bid(self, value, context, estimated_CTR):
+        # Compute the bid as expected value
+        bid = value * estimated_CTR
+        if not self.model_initialised:
+            # Option 1:
+            # Sample the bid shading factor 'gamma' from a Gaussian
+            gamma = self.rng.normal(self.prev_gamma, self.gamma_sigma)
+            normal_pdf = lambda g: np.exp(-((self.prev_gamma - g) / self.gamma_sigma)**2/2) / (self.gamma_sigma * np.sqrt(2 * np.pi))
+            propensity = normal_pdf(gamma)
+        else:
+            # Option 2:
+            # Sample from the contextual bandit
+            x = torch.Tensor([estimated_CTR, value])
+            with torch.no_grad():
+                gamma, propensity = self.bidding_policy(x)
+                gamma = torch.clip(gamma, 0.0, 1.0)
+
+        bid *= gamma.detach().item() if self.model_initialised else gamma
+        self.gammas.append(gamma)
+        self.propensities.append(propensity)
+        return bid
+
+    def update(self, contexts, values, bids, prices, outcomes, estimated_CTRs, won_mask, iteration, plot, figsize, fontsize, name):
+        # Compute net utility
+        utilities = np.zeros_like(values)
+        utilities[won_mask] = (values[won_mask] * outcomes[won_mask]) - prices[won_mask]
+        # utilities = torch.Tensor(utilities)
+
+        ##############################
+        # 1. TRAIN UTILITY ESTIMATOR #
+        ##############################
+        gammas_numpy = np.array([g.detach().item() if self.model_initialised else g for g in self.gammas])
+        if self.model_initialised:
+            # Predict Utility -- \hat{u}
+            orig_features = torch.Tensor(np.hstack((estimated_CTRs.reshape(-1,1), values.reshape(-1,1), gammas_numpy.reshape(-1, 1))))
+            W = self.winrate_model(orig_features).squeeze().detach().numpy()
+            print('AUC predicting P(win):\t\t\t\t', roc_auc_score(won_mask.astype(np.uint8), W))
+
+            V = estimated_CTRs * values
+            P = estimated_CTRs * values * gammas_numpy
+            estimated_utilities = W * (V - P)
+
+            errors = estimated_utilities - utilities
+            print('Estimated Utility\t Mean Error:\t\t\t', errors.mean())
+            print('Estimated Utility\t Mean Absolute Error:\t', np.abs(errors).mean())
+
+        # Augment data with samples: if you shade 100%, you will lose
+        # If you won now, you would have also won if you bid higher
+        X = np.hstack((estimated_CTRs.reshape(-1,1), values.reshape(-1,1), gammas_numpy.reshape(-1, 1)))
+
+        X_aug_neg = X.copy()
+        X_aug_neg[:, -1] = 0.0
+
+        X_aug_pos = X[won_mask].copy()
+        X_aug_pos[:, -1] = np.maximum(X_aug_pos[:, -1], 1.0)
+
+        X = torch.Tensor(np.vstack((X, X_aug_neg)))
+
+        y = won_mask.astype(np.uint8).reshape(-1,1)
+        y = torch.Tensor(np.concatenate((y, np.zeros_like(y))))
+
+        # Fit the model
+        self.winrate_model.train()
+        epochs = 8192 * 4
+        lr = 3e-3
+        optimizer = torch.optim.Adam(self.winrate_model.parameters(), lr=lr, weight_decay=1e-6, amsgrad=True)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=256, min_lr=1e-7, factor=0.2, verbose=True)
+        criterion = torch.nn.BCELoss()
+        losses = []
+        best_epoch, best_loss = -1, np.inf
+        for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
+            optimizer.zero_grad()
+            pred_y = self.winrate_model(X)
+            loss = criterion(pred_y, y)
+            loss.backward()
+            optimizer.step()
+            losses.append(loss.item())
+            scheduler.step(loss)
+            if (best_loss - losses[-1]) > 1e-6:
+                best_epoch = epoch
+                best_loss = losses[-1]
+            elif epoch - best_epoch > 1024:
+                print(f'Stopping at Epoch {epoch}')
+                break
+
+        losses = np.array(losses)
+
+        self.winrate_model.eval()
+
+        # Predict Utility -- \hat{u}
+        orig_features = torch.Tensor(np.hstack((estimated_CTRs.reshape(-1,1), values.reshape(-1,1), gammas_numpy.reshape(-1, 1))))
+        W = self.winrate_model(orig_features).squeeze().detach().numpy()
+        print('AUC predicting P(win):\t\t\t\t', roc_auc_score(won_mask.astype(np.uint8), W))
+
+        V = estimated_CTRs * values
+        P = estimated_CTRs * values * gammas_numpy
+        estimated_utilities = W * (V - P)
+
+        errors = estimated_utilities - utilities
+        print('Estimated Utility\t Mean Error:\t\t\t', errors.mean())
+        print('Estimated Utility\t Mean Absolute Error:\t', np.abs(errors).mean())
+
+        ##############################
+        # 2. TRAIN DOUBLY ROBUST POLICY #
+        ##############################
+        utilities = torch.Tensor(utilities)
+        estimated_utilities = torch.Tensor(estimated_utilities)
+        gammas = torch.Tensor(self.gammas)
+
+        # Prepare features
+        X = torch.Tensor(np.hstack((estimated_CTRs.reshape(-1,1), values.reshape(-1,1))))
+
+        if not self.model_initialised:
+            self.bidding_policy.initialise_policy(X, gammas)
+
+        # Ensure we don't have propensities that are rounded to zero
+        propensities = torch.clip(torch.Tensor(self.propensities), min=1e-15)
+
+        # Fit the model
+        self.bidding_policy.train()
+        epochs = 8192 * 4
+        lr = 7e-3
+        optimizer = torch.optim.Adam(self.bidding_policy.parameters(), lr=lr, weight_decay=1e-4, amsgrad=True)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=100, min_lr=1e-8, factor=0.2, threshold=5e-3, verbose=True)
+
+        losses = []
+        best_epoch, best_loss = -1, np.inf
+        for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
+            optimizer.zero_grad()  # Setting our stored gradients equal to zero
+            loss = self.bidding_policy.loss(X, gammas, propensities, utilities, utility_estimates=estimated_utilities, winrate_model=self.winrate_model, importance_weight_clipping_eps=50.0)
+            loss.backward()  # Computes the gradient of the given tensor w.r.t. the weights/bias
+            optimizer.step()  # Updates weights and biases with the optimizer (SGD)
+            losses.append(loss.item())
+            scheduler.step(loss)
+
+            if (best_loss - losses[-1]) > 1e-6:
+                best_epoch = epoch
+                best_loss = losses[-1]
+            elif epoch - best_epoch > 512:
+                print(f'Stopping at Epoch {epoch}')
+                break
+
+        losses = np.array(losses)
+        if np.isnan(losses).any():
+            print('NAN DETECTED! in losses')
+            print(list(losses))
+            print(np.isnan(X.detach().numpy()).any(), X)
+            print(np.isnan(gammas.detach().numpy()).any(), gammas)
+            print(np.isnan(propensities.detach().numpy()).any(), propensities)
+            print(np.isnan(utilities.detach().numpy()).any(), utilities)
+            exit(1)
+
+        self.bidding_policy.eval()
+
+        pred_gammas, _ = self.bidding_policy(X)
+        pred_gammas = pred_gammas.detach().numpy()
+        print(name, 'Number of samples: ', X.shape)
+        print(name, 'Predicted Gammas: ', pred_gammas.min(), pred_gammas.max(), pred_gammas.mean())
+
+        self.model_initialised = True
+        self.bidding_policy.model_initialised = True
+
+    def clear_logs(self, memory):
+        if not memory:
+            self.gammas = []
+            self.propensities = []
+        else:
+            self.gammas = self.gammas[-memory:]
+            self.propensities = self.propensities[-memory:]

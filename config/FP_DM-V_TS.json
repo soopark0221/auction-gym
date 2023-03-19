@@ -9,7 +9,7 @@
     "obs_embedding_size": 5,
     "allocation": "FirstPrice",
     "agents": [ {
-      "name": "Gaussian Noise",
+      "name": "Bayes by Backprop",
       "num_copies": 3,
       "num_items": 12,
         "allocator": {
@@ -22,8 +22,7 @@
               "gamma_mu": 1.0,
               "gamma_sigma": 0.02,
               "context_dim": 5,
-              "method": "\"Gaussian Noise\"",
-              "noise": 0.02
+              "method": "\"Bayes by Backprop\""
             }
       }
     }],
