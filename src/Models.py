@@ -130,8 +130,8 @@ class BBBWinRateEstimator(nn.Module):
         x = self.relu(self.linear1(x,sample))
         return torch.sigmoid(self.linear2(x, sample))
     
-    def loss(self, x, y, batch_size, sample_num, prior_var):
-        loss = self.linear1.KL_div(prior_var)/batch_size + self.linear2.KL_div(prior_var)/batch_size
+    def loss(self, x, y, N, sample_num, prior_var):
+        loss = self.linear1.KL_div(prior_var)/N + self.linear2.KL_div(prior_var)/N
         for _ in range(sample_num):
             logits = self.linear2(self.relu(self.linear1(x)))
             loss += self.metric(logits.squeeze(), y.squeeze())/sample_num
@@ -362,8 +362,9 @@ class BayesianPolicy(nn.Module):
         criterion = torch.nn.MSELoss()
         losses = []
         best_epoch, best_loss = -1, np.inf
-        batch_size = 128
-        batch_num = int(8192/128)
+        N = 8192
+        B = 128
+        batch_num = int(N/B)
 
         for epoch in tqdm(range(int(epochs)), desc=f'Initialising Policy'):
             epoch_loss = 0
@@ -469,3 +470,132 @@ class BayesianPolicy(nn.Module):
             DR_DM = W * (V - P)
 
             return -(DR_IPS + DR_DM).mean()
+
+class DeterministicPolicy(nn.Module):
+    def __init__(self, loss, context_dim):
+        super().__init__()
+
+        self.ffn = nn.Sequential(*[
+            nn.Linear(context_dim+3, 8),
+            nn.ReLU(),
+            nn.Linear(8, 1),
+            nn.Sigmoid()
+            ])
+        self.eval()
+
+    def initialise_policy(self, context, gamma):
+        # The first time, train the policy to imitate the logging policy
+        self.train()
+        epochs = 10000
+        lr = 1e-3
+        optimizer = torch.optim.Adam(self.parameters(), lr=lr, weight_decay=1e-4, amsgrad=True)
+        metric = torch.nn.MSELoss()
+        losses = []
+        best_epoch, best_loss = -1, np.inf
+        N = 8192
+        B = 128
+        batch_num = int(N/B)
+
+        for epoch in tqdm(range(int(epochs)), desc=f'Initialising Policy'):
+            epoch_loss = 0
+            for i in range(batch_num):
+                context_mini = context[i:i+batch_num]
+                gamma_mini = gamma[i:i+batch_num]
+                optimizer.zero_grad()
+                gamma_pred = self.ffn(context_mini)
+                loss = metric(gamma_pred.squeeze(), gamma_mini)
+                loss.backward()
+                optimizer.step()
+                epoch_loss += loss.item()
+            losses.append(epoch_loss)
+            if (best_loss - losses[-1]) > 1e-6:
+                best_epoch = epoch
+                best_loss = losses[-1]
+            elif epoch - best_epoch > 100:
+                print(f'Stopping at Epoch {epoch}')
+                break
+
+        # fig, ax = plt.subplots()
+        # plt.title(f'Initialising policy')
+        # plt.plot(losses, label=r'Loss')
+        # plt.ylabel('MSE with logging policy')
+        # plt.legend()
+        # fig.set_tight_layout(True)
+        #plt.show()
+
+        # print('Predicted mu Gammas: ', predicted_mu_gammas.min(), predicted_mu_gammas.max(), predicted_mu_gammas.mean())
+        # print('Predicted sigma Gammas: ', predicted_sigma_gammas.min(), predicted_sigma_gammas.max(), predicted_sigma_gammas.mean())
+
+    def forward(self, x):
+        return self.ffn(x)
+    
+    def loss(self, winrate_model, context):
+        gamma_pred = self.bidding_policy(context).reshape(-1,1)
+        utility = winrate_model(torch.cat([context, gamma_pred], dim=1))
+        return torch.mean(utility)
+
+class BayesianDeterministicPolicy(nn.Module):
+    def __init__(self, context_dim, prior_var):
+        super().__init__()
+
+        self.linear1 = BayesianLinear(context_dim+3, 8)
+        self.linear2 = BayesianLinear(8, 1)
+        self.eval()
+
+        self.prior_var = prior_var
+        self.model_initialised = False
+
+    def initialise_policy(self, context, gamma):
+        # The first time, train the policy to imitate the logging policy
+        self.train()
+        epochs = 10000
+        lr = 1e-3
+        optimizer = torch.optim.Adam(self.parameters(), lr=lr, weight_decay=1e-4, amsgrad=True)
+        metric = torch.nn.MSELoss()
+        losses = []
+        best_epoch, best_loss = -1, np.inf
+        N = 8192
+        B = 128
+        batch_num = int(N/B)
+
+        for epoch in tqdm(range(int(epochs)), desc=f'Initialising Policy'):
+            epoch_loss = 0
+            for i in range(batch_num):
+                context_mini = context[i:i+batch_num]
+                gamma_mini = gamma[i:i+batch_num]
+                optimizer.zero_grad()
+                gamma_pred = F.relu(self.linear1(context_mini))
+                gamma_pred = F.sigmoid(self.linear2(gamma_pred))
+                loss = metric(gamma_pred.squeeze(), gamma_mini)
+                loss += (self.linear1.KL_div(self.prior_var) + self.linear2.KL_div(self.prior_var))/N
+                loss.backward()
+                optimizer.step()
+                epoch_loss += loss.item()
+            losses.append(epoch_loss)
+            if (best_loss - losses[-1]) > 1e-6:
+                best_epoch = epoch
+                best_loss = losses[-1]
+            elif epoch - best_epoch > 100:
+                print(f'Stopping at Epoch {epoch}')
+                break
+
+        # fig, ax = plt.subplots()
+        # plt.title(f'Initialising policy')
+        # plt.plot(losses, label=r'Loss')
+        # plt.ylabel('MSE with logging policy')
+        # plt.legend()
+        # fig.set_tight_layout(True)
+        #plt.show()
+
+        # print('Predicted mu Gammas: ', predicted_mu_gammas.min(), predicted_mu_gammas.max(), predicted_mu_gammas.mean())
+        # print('Predicted sigma Gammas: ', predicted_sigma_gammas.min(), predicted_sigma_gammas.max(), predicted_sigma_gammas.mean())
+
+    def forward(self, x):
+        x = F.relu(self.linear1(x, True))
+        return F.sigmoid(self.linear2(x, True))
+    
+    def loss(self, winrate_model, context, N):
+        kl_penalty = (self.linear1.KL_div(self.prior_var) + self.linear2.KL_div(self.prior_var))/N
+        gamma_pred = self(context).reshape(-1,1)
+        utility = winrate_model(torch.cat([context, gamma_pred], dim=1))
+        return torch.mean(utility) + kl_penalty

@@ -743,23 +743,24 @@ class ValueSamplingBidder(Bidder):
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=100, min_lr=1e-7, factor=0.1, verbose=True)
         losses = []
         best_epoch, best_loss = -1, np.inf
-        batch_size = 128
-        batch_num = int(8192/128)
+        N = 8192
+        B = 128 
+        batch_num = int(N/B)
 
         for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
             epoch_loss = 0
 
             for i in range(batch_num):
-                X_mini = X[i:i+batch_size]
-                y_mini = y[i:i+batch_size]
+                X_mini = X[i:i+B]
+                y_mini = y[i:i+B]
                 optimizer.zero_grad()
 
                 if self.method=='Bayes by Backprop':
-                    loss = self.winrate_model.loss(X_mini, y_mini, batch_size, 2, self.prior_var)/batch_num
+                    loss = self.winrate_model.loss(X_mini, y_mini, N, 2, self.prior_var)
                 elif self.method=='NoisyNet':
-                    loss = self.winrate_model.loss(X_mini, y_mini, 2)/batch_num
+                    loss = self.winrate_model.loss(X_mini, y_mini, 2)
                 else:
-                    loss = self.winrate_model.loss(X_mini, y_mini)/batch_num
+                    loss = self.winrate_model.loss(X_mini, y_mini)
                 loss.backward()
                 optimizer.step()
                 epoch_loss += loss.item()
@@ -798,7 +799,7 @@ class ValueSamplingBidder(Bidder):
             self.gammas = self.gammas[-memory:]
 
 class StochasticPolicyBidder(Bidder):
-
+    # work in progress. this will not work.
     def __init__(self, rng, gamma_mu, gamma_sigma, context_dim, learning_object, exploration_method, use_WIS=True):
         self.gamma_mu = gamma_mu
         self.gamma_sigma = gamma_sigma
@@ -992,3 +993,181 @@ class StochasticPolicyBidder(Bidder):
         else:
             self.gammas = self.gammas[-memory:]
             self.propensities = self.propensities[-memory:]
+
+class DeterministicPolicyBidder(Bidder):
+
+    def __init__(self, rng, gamma_mu, gamma_sigma, context_dim, exploration_method, noise=0.02, prior_var=1.0):
+        self.gamma_mu = gamma_mu
+        self.gamma_sigma = gamma_sigma
+        self.context_dim = context_dim + 1
+        self.gammas = []
+        self.propensities = []
+
+        self.winrate_model = NeuralWinRateEstimator(context_dim)
+
+        assert exploration_method in ['Gaussian Noise', 'NoisyNet', 'Bayes by Backprop', 'MC Dropout']
+        self.exploration_method = exploration_method
+        if self.exploration_method=='NoisyNet':
+            self.bidding_policy = BayesianDeterministicPolicy(context_dim)
+        elif self.exploration_method=='Bayes by Backprop':
+            self.bidding_policy = BayesianDeterministicPolicy(context_dim)
+            self.prior_var = prior_var
+        elif self.exploration_method=='MC Dropout':
+            raise NotImplementedError
+        else:
+            self.bidding_policy = DeterministicPolicy(context_dim)
+            self.noise = 0.02
+        self.model_initialised = False
+        super(StochasticPolicyBidder, self).__init__(rng)
+
+    def bid(self, value, context, estimated_CTR):
+        # Compute the bid as expected value
+        bid = value * estimated_CTR
+        if not self.model_initialised:
+            # Option 1:
+            # Sample the bid shading factor 'gamma' from a Gaussian
+            gamma = self.rng.normal(self.gamma_mu, self.gamma_sigma)
+        else:
+            # Option 2:
+            # Sample from the contextual bandit
+            x = torch.Tensor(np.concatenate([context, np.array(estimated_CTR).reshape(1), np.array(value).reshape(1)]))
+            with torch.no_grad():
+                gamma = self.bidding_policy(x)
+                gamma = torch.clip(gamma, 0.0, 1.0)
+        
+        if self.model_initialised:
+            gamma = gamma.detach().item()
+        if self.exploration_method=='Gaussian noise':
+            gamma = np.clip(gamma, 0.0, 1.0)
+        bid *= gamma
+        self.gammas.append(gamma)
+        # don't care
+        self.propensities.append(1.0)
+        return bid
+
+    def update(self, contexts, values, bids, prices, outcomes, estimated_CTRs, won_mask, iteration, plot, figsize, fontsize, name):
+        # Compute net utility
+        utilities = np.zeros_like(values)
+        utilities[won_mask] = (values[won_mask] * outcomes[won_mask]) - prices[won_mask]
+        # utilities = torch.Tensor(utilities)
+
+        ##############################
+        # 1. TRAIN UTILITY ESTIMATOR #
+        ##############################
+        gammas_numpy = np.array([g.detach().item() if self.model_initialised else g for g in self.gammas])
+        X = np.hstack((contexts.reshape(-1, self.context_dim), estimated_CTRs.reshape(-1,1), values.reshape(-1,1), gammas_numpy.reshape(-1, 1)))
+
+        X_aug_neg = X.copy()
+        X_aug_neg[:, -1] = 0.0
+
+        X_aug_pos = X[won_mask].copy()
+        X_aug_pos[:, -1] = np.maximum(X_aug_pos[:, -1], 1.0)
+
+        X = torch.Tensor(np.vstack((X, X_aug_neg)))
+
+        y = won_mask.astype(np.uint8).reshape(-1,1)
+        y = torch.Tensor(np.concatenate((y, np.zeros_like(y))))
+
+        # Fit the model
+        self.winrate_model.train()
+        epochs = 10000
+        lr = 1e-3
+        optimizer = torch.optim.Adam(self.winrate_model.parameters(), lr=lr, weight_decay=1e-6, amsgrad=True)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=256, min_lr=1e-7, factor=0.2, verbose=True)
+        losses = []
+        best_epoch, best_loss = -1, np.inf
+        N = 8192
+        B = 128
+        batch_num = int(N/B)
+
+        for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
+            epoch_loss = 0
+
+            for i in range(batch_num):
+                X_mini = X[i:i+B]
+                optimizer.zero_grad()
+                loss = self.winrate_model.loss(X_mini, y_mini)
+                loss.backward()
+                optimizer.step()
+                epoch_loss += loss.item()
+                scheduler.step(loss)
+            losses.append(epoch_loss)
+
+            if (best_loss - losses[-1]) > 1e-6:
+                best_epoch = epoch
+                best_loss = losses[-1]
+            elif epoch - best_epoch > 500:
+                print(f'Stopping at Epoch {epoch}')
+                break
+
+        self.winrate_model.eval()
+
+        ##############################
+        # 2. TRAIN POLICY #
+        ##############################
+        utilities = torch.Tensor(utilities)
+        estimated_utilities = torch.Tensor(estimated_utilities)
+        gammas = torch.Tensor(self.gammas)
+
+        # Prepare features
+        X = torch.Tensor(np.hstack((contexts.reshape(-1,self.context_dim), estimated_CTRs.reshape(-1,1), values.reshape(-1,1))))
+
+        if not self.model_initialised:
+            self.bidding_policy.initialise_policy(X, gammas)
+
+        # Fit the model
+        self.bidding_policy.train()
+        epochs = 10000
+        lr = 1e-3
+        optimizer = torch.optim.Adam(self.bidding_policy.parameters(), lr=lr, weight_decay=1e-4, amsgrad=True)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=100, min_lr=1e-8, factor=0.2, threshold=5e-3, verbose=True)
+
+        losses = []
+        best_epoch, best_loss = -1, np.inf
+        N = 8192
+        B = 128
+        batch_num = int(N/B)
+
+        self.winrate_model.requires_grad_(False)
+
+        for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
+            epoch_loss = 0
+
+            for i in range(batch_num):
+                X_mini = X[i:i+B]
+                y_mini = y[i:i+B]
+                optimizer.zero_grad()
+
+                if self.exploration_method=='Bayes by Backprop':
+                    loss = self.bidding_policy.loss(self.winrate_model, X_mini, N)
+                else:
+                    loss = self.bidding_policy.loss(self.winrate_model, X_mini)
+                loss.backward()
+                optimizer.step()
+                epoch_loss += loss.item()
+                scheduler.step(loss)
+            losses.append(epoch_loss)
+
+            if (best_loss - losses[-1]) > 1e-6:
+                best_epoch = epoch
+                best_loss = losses[-1]
+            elif epoch - best_epoch > 500:
+                print(f'Stopping at Epoch {epoch}')
+                break
+
+        
+        losses = np.array(losses)
+        if np.isnan(losses).any():
+            print('NAN DETECTED! in losses')
+            exit(1)
+
+        self.winrate_model.requires_grad_(True)
+        self.bidding_policy.eval()
+        self.model_initialised = True
+        self.bidding_policy.model_initialised = True
+
+    def clear_logs(self, memory):
+        if not memory:
+            self.gammas = []
+        else:
+            self.gammas = self.gammas[-memory:]
