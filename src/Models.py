@@ -2,15 +2,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
-from numba import jit
-from scipy.optimize import minimize
+# from numba import jit
 from torch.nn import functional as F
 from tqdm import tqdm
 
 
-@jit(nopython=True)
-def sigmoid(x):
-    return 1.0 / (1.0 + np.exp(-x))
+# @jit(nopython=True)
+# def sigmoid(x):
+#     return 1.0 / (1.0 + np.exp(-x))
 
 class BayesianLinear(nn.Module):
     def __init__(self, in_features, out_features):
@@ -372,7 +371,7 @@ class BayesianStochasticPolicy(nn.Module):
                 optimizer.zero_grad()
                 gamma_mu = F.sigmoid(self.mu_head(F.relu(self.base(context_mini))))
                 gamma_sigma = F.sigmoid(self.sigma_head(F.relu(self.base(context_mini))))
-                loss = metric(gamma_mu.squeeze(), gamma_mini)+ metric(gamma_sigma.squeeze(), torch.ones_like(gammas) * 0.1)
+                loss = metric(gamma_mu.squeeze(), gamma_mini)+ metric(gamma_sigma.squeeze(), torch.ones_like(gamma_mini) * 0.1)
                 loss.backward()
                 optimizer.step()
                 epoch_loss += loss.item()
@@ -385,15 +384,15 @@ class BayesianStochasticPolicy(nn.Module):
                 break
 
     def forward(self, x, MAP_propensity):
-        x = F.relu(self.base(x))
-        mu = F.sigmoid(self.mu_head(x)).squeeze()
+        x = torch.relu(self.base(x))
+        mu = torch.sigmoid(self.mu_head(x)).squeeze()
         sigma = F.sigmoid(self.sigma_head(x)).squeeze() + self.min_sigma
         dist = torch.distributions.normal.Normal(mu, sigma)
         gamma = dist.rsample()
         if MAP_propensity:
-            x_MAP = F.relu(self.base(x, False))
-            mu_MAP = F.sigmoid(self.mu_head(x_MAP, False)).squeeze()
-            sigma_MAP = F.sigmoid(self.sigma_head(x_MAP, False)).squeeze() + self.min_sigma
+            x_MAP = torch.relu(self.base(x, False))
+            mu_MAP = torch.sigmoid(self.mu_head(x_MAP, False)).squeeze()
+            sigma_MAP = torch.sigmoid(self.sigma_head(x_MAP, False)).squeeze() + self.min_sigma
             dist_MAP = torch.distributions.normal.Normal(mu_MAP, sigma_MAP)
             propensity = torch.exp(dist_MAP.log_prob(gamma))
         else:
@@ -402,9 +401,9 @@ class BayesianStochasticPolicy(nn.Module):
         return gamma, propensity
 
     def normal_pdf(self, x, gamma):
-        x = F.relu(self.base(x))
-        mu = F.sigmoid(self.mu_head(x)).squeeze()
-        sigma = F.sigmoid(self.sigma_head(x)).squeeze() + self.min_sigma
+        x = torch.relu(self.base(x))
+        mu = torch.sigmoid(self.mu_head(x)).squeeze()
+        sigma = torch.sigmoid(self.sigma_head(x)).squeeze() + self.min_sigma
         dist = torch.distributions.Normal(mu, sigma)
         return torch.exp(dist.log_prob(gamma))
 
@@ -443,7 +442,7 @@ class BayesianStochasticPolicy(nn.Module):
                                                     max=1.0+policy_clipping)
             loss = - torch.min(importance_weights * utility_estimates, clipped_importance_weights * utility_estimates).mean()
 
-        elif self.loss_type == 'Doubly Robust':
+        elif self.loss_type == 'DR':
             importance_weights = target_pp / logging_pp
 
             x = torch.cat([context, gamma.reshape(-1,1)], dim=1)
@@ -478,18 +477,18 @@ class StochasticPolicy(nn.Module):
         self.model_initialised = False
     
     def mu(self, x):
-        x = F.relu(self.base(x))
+        x = torch.relu(self.base(x))
         if self.dropout is None:
-            return F.sigmoid(self.mu_head(x))
+            return torch.sigmoid(self.mu_head(x))
         else:
-            return F.sigmoid(self.mu_head(self.dropout_mu(x)))
+            return torch.sigmoid(self.mu_head(self.dropout_mu(x)))
     
     def sigma(self, x):
-        x = F.relu(self.base(x))
+        x = torch.relu(self.base(x))
         if self.dropout is None:
-            return F.sigmoid(self.sigma_head(x))
+            return torch.sigmoid(self.sigma_head(x))
         else:
-            return F.sigmoid(self.sigma_head(self.dropout_mu(x)))
+            return torch.sigmoid(self.sigma_head(self.dropout_mu(x)))
 
     def initialise_policy(self, contexts, gammas):
         # The first time, train the policy to imitate the logging policy
@@ -512,7 +511,7 @@ class StochasticPolicy(nn.Module):
                 optimizer.zero_grad()
                 gamma_mu = self.mu(context_mini)
                 gamma_sigma = self.sigma(context_mini)
-                loss = metric(gamma_mu.squeeze(), gamma_mini)+ metric(gamma_sigma.squeeze(), torch.ones_like(gammas) * 0.1)
+                loss = metric(gamma_mu.squeeze(), gamma_mini)+ metric(gamma_sigma.squeeze(), torch.ones_like(gamma_mini) * 0.1)
                 loss.backward()
                 optimizer.step()  
                 epoch_loss += loss.item()
@@ -544,7 +543,7 @@ class StochasticPolicy(nn.Module):
         return torch.exp(dist.log_prob(gamma))
 
     def loss(self, context, value, price, gamma, logging_pp, utility,
-             winrate_model=None, use_WIS=True, policy_clipping=0.5, entropy_factor=0.1):
+             winrate_model=None, use_WIS=True, policy_clipping=0.5, entropy_factor=0.0):
         context = torch.Tensor(context)
         gamma = torch.Tensor(gamma)
         target_pp = self.normal_pdf(context, gamma)
@@ -578,7 +577,7 @@ class StochasticPolicy(nn.Module):
                                                     max=1.0+policy_clipping)
             loss = - torch.min(importance_weights * utility_estimates, clipped_importance_weights * utility_estimates).mean()
 
-        elif self.loss_type == 'Doubly Robust':
+        elif self.loss_type == 'DR':
             importance_weights = target_pp / logging_pp
 
             x = torch.cat([context, gamma.reshape(-1,1)], dim=1)

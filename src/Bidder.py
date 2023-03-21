@@ -1,15 +1,13 @@
 import matplotlib.pyplot as plt
 import numpy as np
-import scipy.stats
 import torch
 
-from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import RBF
 from sklearn.metrics import roc_auc_score
 from tqdm import tqdm
 
 from Impression import ImpressionOpportunity
 from Models import *
+from swag_misc import SWAG
 
 
 class Bidder:
@@ -800,7 +798,7 @@ class ValueSamplingBidder(Bidder):
 
 class StochasticPolicyBidder(Bidder):
     # work in progress. this will not work.
-    def __init__(self, rng, gamma_mu, gamma_sigma, context_dim, loss_type, exploration_method, winrate_model=None, use_WIS=True):
+    def __init__(self, rng, gamma_mu, gamma_sigma, context_dim, loss_type, exploration_method, use_WIS=True):
         super().__init__(rng)
         self.gamma_mu = gamma_mu
         self.gamma_sigma = gamma_sigma
@@ -809,23 +807,29 @@ class StochasticPolicyBidder(Bidder):
         self.propensities = []
         
         self.MAP_propensity = True
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         assert loss_type in ['REINFORCE', 'Actor-Critic', 'PPO_MC', 'PPO_AC', 'DR']
         self.loss_type = loss_type
         if loss_type in ['Actor-Critic', 'PPO_AC', 'DR']:
-            self.winrate_model = winrate_model
+            self.winrate_model = NeuralWinRateEstimator(context_dim)
+            self.winrate_model.to(self.device)
         # Vanilla IS or weighted IS?
         if self.loss_type=='REINFORCE':
             self.use_WIS = use_WIS
 
-        assert exploration_method in ['Entropy Regularization', 'NoisyNet', 'MC Dropout']
+        assert exploration_method in ['Entropy Regularization', 'NoisyNet', 'SWAG', 'MC Dropout']
         self.exploration_method = exploration_method
         if self.exploration_method=='NoisyNet':
             self.bidding_policy = BayesianStochasticPolicy(context_dim)
+        elif self.exploration_method=='SWAG':
+            self.bidding_policy = StochasticPolicy(context_dim, loss_type)
+            self.swag_policy = SWAG(self.bidding_policy)
         elif self.exploration_method=='MC Dropout':
             self.bidding_policy = StochasticPolicy(context_dim, loss_type, dropout=0.8)
         else:
             self.bidding_policy = StochasticPolicy(context_dim, loss_type)
+        self.bidding_policy.to(self.device)
         self.model_initialised = False
 
     def bid(self, value, context, estimated_CTR):
@@ -834,16 +838,18 @@ class StochasticPolicyBidder(Bidder):
         if not self.model_initialised:
             # Option 1:
             # Sample the bid shading factor 'gamma' from a Gaussian
-            gamma = self.rng.normal(self.prev_gamma, self.gamma_sigma)
-            normal_pdf = lambda g: np.exp(-((self.prev_gamma - g) / self.gamma_sigma)**2/2) / (self.gamma_sigma * np.sqrt(2 * np.pi))
+            gamma = self.rng.normal(self.gamma_mu, self.gamma_sigma)
+            normal_pdf = lambda g: np.exp(-((self.gamma_mu - g) / self.gamma_sigma)**2/2) / (self.gamma_sigma * np.sqrt(2 * np.pi))
             propensity = normal_pdf(gamma)
         else:
             # Option 2:
             # Sample from the contextual bandit
-            x = torch.Tensor(np.concatenate([context, np.array(estimated_CTR).reshape(1), np.array(value).reshape(1)]))
+            x = torch.Tensor(np.concatenate([context, np.array(estimated_CTR).reshape(1), np.array(value).reshape(1)])).to(self.device)
             with torch.no_grad():
                 if self.exploration_method=='NoisyNet':
                     gamma, propensity = self.bidding_policy(x, sampling=True)
+                elif self.exploration_method=='SWAG':
+                    gamma, propensity = self.swag_policy(x)
                 else:
                     gamma, propensity = self.bidding_policy(x)
                 gamma = torch.clip(gamma, 0.0, 1.0)
@@ -855,7 +861,7 @@ class StochasticPolicyBidder(Bidder):
         self.propensities.append(propensity)
         return bid
 
-    def update(self, contexts, values, prices, outcomes, estimated_CTRs, won_mask, name):
+    def update(self, contexts, values, bids, prices, outcomes, estimated_CTRs, won_mask, iteration, plot, figsize, fontsize, name):
         # Compute net utility
         utilities = np.zeros_like(values)
         utilities[won_mask] = (values[won_mask] * outcomes[won_mask]) - prices[won_mask]
@@ -876,13 +882,14 @@ class StochasticPolicyBidder(Bidder):
             X_aug_pos = X[won_mask].copy()
             X_aug_pos[:, -1] = np.maximum(X_aug_pos[:, -1], 1.0)
 
-            X = torch.Tensor(np.vstack((X, X_aug_neg)))
+            X = torch.Tensor(np.vstack((X, X_aug_neg))).to(self.device)
 
             y = won_mask.astype(np.uint8).reshape(-1,1)
-            y = torch.Tensor(np.concatenate((y, np.zeros_like(y))))
+            y = torch.Tensor(np.concatenate((y, np.zeros_like(y)))).to(self.device)
 
             # Fit the model
             self.winrate_model.train()
+            best_epoch, best_loss = -1, np.inf
             epochs = 10000
             lr = 1e-3
             optimizer = torch.optim.Adam(self.winrate_model.parameters(), lr=lr, weight_decay=1e-6, amsgrad=True)
@@ -918,20 +925,23 @@ class StochasticPolicyBidder(Bidder):
         ##############################
         # 2. TRAIN POLICY #
         ##############################
-        utilities = torch.Tensor(utilities)
-        gammas = torch.Tensor(self.gammas)
+        utilities = torch.Tensor(utilities).to(self.device)
+        gammas = torch.Tensor(self.gammas).to(self.device)
 
         # Prepare features
-        X = torch.Tensor(np.hstack((contexts.reshape(-1,self.context_dim), estimated_CTRs.reshape(-1,1), values.reshape(-1,1))))
+        X = torch.Tensor(np.hstack((contexts.reshape(-1,self.context_dim), estimated_CTRs.reshape(-1,1), values.reshape(-1,1)))).to(self.device)
+        V = torch.Tensor(values).to(self.device)
+        P = torch.Tensor(prices).to(self.device)
 
         if not self.model_initialised:
             self.bidding_policy.initialise_policy(X, gammas)
 
         # Ensure we don't have propensities that are rounded to zero
-        propensities = torch.clip(torch.Tensor(self.propensities), min=1e-15)
+        propensities = torch.clip(torch.Tensor(self.propensities).to(self.device), min=1e-15)
 
         # Fit the model
         self.bidding_policy.train()
+        self.winrate_model.requires_grad_(False)
         epochs = 10000
         lr = 1e-3
         optimizer = torch.optim.Adam(self.bidding_policy.parameters(), lr=lr, weight_decay=1e-4, amsgrad=True)
@@ -941,27 +951,33 @@ class StochasticPolicyBidder(Bidder):
         N = 8192
         B = 128
         batch_num = int(N/B)
+        best_epoch, best_loss = -1, np.inf
 
         for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
             epoch_loss = 0
 
             for i in range(batch_num):
                 X_mini = X[i:i+B]
+                V_mini = V[i:i+B]
+                P_mini = P[i:i+B]
                 gamma_mini = gammas[i:i+B]
                 pp_mimi = propensities[i:i+B]
                 util_mini = utilities[i:i+B]
                 optimizer.zero_grad()
                 if self.winrate_model is None:
                     loss = self.bidding_policy.loss(
-                        X_mini, gamma_mini, pp_mimi, util_mini)
+                        X_mini, V_mini, P_mini, gamma_mini, pp_mimi, util_mini)
                 else:
                     loss = self.bidding_policy.loss(
-                        X_mini, gamma_mini, pp_mimi, util_mini, self.winrate_model)
+                        X_mini, V_mini, P_mini, gamma_mini, pp_mimi, util_mini, self.winrate_model)
                 loss.backward()
                 optimizer.step()
                 epoch_loss += loss.item()
                 scheduler.step(loss)
             losses.append(epoch_loss)
+            
+            if self.exploration_method=='SWAG':
+                self.swag_policy.collect_model(self.bidding_policy)
 
             if (best_loss - losses[-1]) > 1e-6:
                 best_epoch = epoch
@@ -981,6 +997,7 @@ class StochasticPolicyBidder(Bidder):
             exit(1)
 
         self.bidding_policy.eval()
+        self.winrate_model.requires_grad_(True)
         self.model_initialised = True
         self.bidding_policy.model_initialised = True
 
@@ -1003,7 +1020,9 @@ class DDPGBidder(Bidder):
         self.gammas = []
         self.propensities = []
 
-        self.winrate_model = NeuralWinRateEstimator(context_dim)
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        self.winrate_model = NeuralWinRateEstimator(context_dim).to(self.device)
 
         assert exploration_method in ['Gaussian Noise', 'NoisyNet', 'Bayes by Backprop', 'MC Dropout']
         self.exploration_method = exploration_method
@@ -1016,6 +1035,7 @@ class DDPGBidder(Bidder):
         else:
             self.bidding_policy = DeterministicPolicy(context_dim)
             self.noise = noise
+        self.bidding_policy.to(self.device)
         self.model_initialised = False
 
     def bid(self, value, context, estimated_CTR):
@@ -1028,7 +1048,7 @@ class DDPGBidder(Bidder):
         else:
             # Option 2:
             # Sample from the contextual bandit
-            x = torch.Tensor(np.concatenate([context, np.array(estimated_CTR).reshape(1), np.array(value).reshape(1)]))
+            x = torch.Tensor(np.concatenate([context, np.array(estimated_CTR).reshape(1), np.array(value).reshape(1)])).to(self.device)
             with torch.no_grad():
                 gamma = self.bidding_policy(x)
                 gamma = torch.clip(gamma, 0.0, 1.0)
@@ -1061,10 +1081,10 @@ class DDPGBidder(Bidder):
         X_aug_pos = X[won_mask].copy()
         X_aug_pos[:, -1] = np.maximum(X_aug_pos[:, -1], 1.0)
 
-        X = torch.Tensor(np.vstack((X, X_aug_neg)))
+        X = torch.Tensor(np.vstack((X, X_aug_neg))).to(self.device)
 
         y = won_mask.astype(np.uint8).reshape(-1,1)
-        y = torch.Tensor(np.concatenate((y, np.zeros_like(y))))
+        y = torch.Tensor(np.concatenate((y, np.zeros_like(y)))).to(self.device)
 
         # Fit the model
         self.winrate_model.train()
@@ -1104,10 +1124,11 @@ class DDPGBidder(Bidder):
         ##############################
         # 2. TRAIN POLICY #
         ##############################
-        gammas = torch.Tensor(self.gammas)
-        X = torch.Tensor(np.hstack((contexts.reshape(-1,self.context_dim), estimated_CTRs.reshape(-1,1), values.reshape(-1,1))))
-        V = torch.Tensor(values)
-        P = torch.Tensor(prices)
+        gammas = torch.Tensor(self.gammas).to(self.device)
+        X = torch.Tensor(np.hstack((contexts.reshape(-1,self.context_dim), estimated_CTRs.reshape(-1,1), values.reshape(-1,1)))).to(self.device)
+        V = torch.Tensor(values).to(self.device)
+        P = torch.Tensor(prices).to(self.device)
+        
         if not self.model_initialised:
             self.bidding_policy.initialise_policy(X, gammas)
 
@@ -1137,6 +1158,8 @@ class DDPGBidder(Bidder):
 
                 if self.exploration_method=='Bayes by Backprop':
                     loss = self.bidding_policy.loss(self.winrate_model, X_mini, V_mini, P_mini, N)
+                elif self.exploration_method=='Entropy Regularization':
+                    loss = self.bidding_policy.loss(self.winrate_model, X_mini, V_mini, P_mini, entropy_factor=0.1)
                 else:
                     loss = self.bidding_policy.loss(self.winrate_model, X_mini, V_mini, P_mini)
                 loss.backward()

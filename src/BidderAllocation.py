@@ -24,6 +24,8 @@ class PyTorchLogisticRegressionAllocator(Allocator):
     def __init__(self, rng, embedding_size, num_items, thompson_sampling=True):
         self.response_model = PyTorchLogisticRegression(n_dim=embedding_size, n_items=num_items)
         self.thompson_sampling = thompson_sampling
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.response_model.to(self.device)
         super(PyTorchLogisticRegressionAllocator, self).__init__(rng)
 
     def update(self, contexts, items, outcomes, iteration, plot, figsize, fontsize, name):
@@ -40,7 +42,7 @@ class PyTorchLogisticRegressionAllocator(Allocator):
         optimizer = torch.optim.Adam(self.response_model.parameters(), lr=lr)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.5)
 
-        X, A, y = torch.Tensor(X), torch.LongTensor(A), torch.Tensor(y)
+        X, A, y = torch.Tensor(X).to(self.device), torch.LongTensor(A).to(self.device), torch.Tensor(y).to(self.device)
         losses = []
         for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
             optimizer.zero_grad()  # Setting our stored gradients equal to zero
@@ -65,7 +67,8 @@ class PyTorchLogisticRegressionAllocator(Allocator):
         self.response_model.eval()
 
     def estimate_CTR(self, context, sample=True):
-        return self.response_model(torch.from_numpy(context.astype(np.float32)), sample=(self.thompson_sampling and sample)).detach().numpy()
+        return self.response_model(torch.from_numpy(context.astype(np.float32)).to(self.device),
+                                   sample=(self.thompson_sampling and sample)).numpy(force=True)
 
 
 class OracleAllocator(Allocator):
