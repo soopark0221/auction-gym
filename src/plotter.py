@@ -32,7 +32,7 @@ def plot_measure_overall(df, measure_name='Social Surplus'):
         return df
 
 if __name__=='__main__':
-    experiment = 'DR_PO'
+    experiment = 'DR_PO3'
 
     data_path = path.join(data_path, experiment)
     settings = ['Baseline', 'Gaussian_Noise', 'NoisyNet', 'SWAG']

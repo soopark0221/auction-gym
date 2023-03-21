@@ -1010,13 +1010,12 @@ class DDPGBidder(Bidder):
         if self.exploration_method=='NoisyNet':
             self.bidding_policy = BayesianDeterministicPolicy(context_dim)
         elif self.exploration_method=='Bayes by Backprop':
-            self.bidding_policy = BayesianDeterministicPolicy(context_dim)
-            self.prior_var = prior_var
+            self.bidding_policy = BayesianDeterministicPolicy(context_dim, prior_var)
         elif self.exploration_method=='MC Dropout':
             raise NotImplementedError
         else:
             self.bidding_policy = DeterministicPolicy(context_dim)
-            self.noise = 0.02
+            self.noise = noise
         self.model_initialised = False
 
     def bid(self, value, context, estimated_CTR):
@@ -1107,7 +1106,8 @@ class DDPGBidder(Bidder):
         ##############################
         gammas = torch.Tensor(self.gammas)
         X = torch.Tensor(np.hstack((contexts.reshape(-1,self.context_dim), estimated_CTRs.reshape(-1,1), values.reshape(-1,1))))
-
+        V = torch.Tensor(values)
+        P = torch.Tensor(prices)
         if not self.model_initialised:
             self.bidding_policy.initialise_policy(X, gammas)
 
@@ -1131,12 +1131,14 @@ class DDPGBidder(Bidder):
 
             for i in range(batch_num):
                 X_mini = X[i:i+B]
+                V_mini = V[i:i+B]
+                P_mini = P[i:i+B]
                 optimizer.zero_grad()
 
                 if self.exploration_method=='Bayes by Backprop':
-                    loss = self.bidding_policy.loss(self.winrate_model, X_mini, N)
+                    loss = self.bidding_policy.loss(self.winrate_model, X_mini, V_mini, P_mini, N)
                 else:
-                    loss = self.bidding_policy.loss(self.winrate_model, X_mini)
+                    loss = self.bidding_policy.loss(self.winrate_model, X_mini, V_mini, P_mini)
                 loss.backward()
                 optimizer.step()
                 epoch_loss += loss.item()
@@ -1154,6 +1156,7 @@ class DDPGBidder(Bidder):
         losses = np.array(losses)
         if np.isnan(losses).any():
             print('NAN DETECTED! in losses')
+            print(losses)
             exit(1)
 
         self.winrate_model.requires_grad_(True)

@@ -26,8 +26,8 @@ class BayesianLinear(nn.Module):
 
     def forward(self, input, sample=True):
         if self.training or sample:
-            weight_sigma = torch.log1p(self.weight_rho)
-            bias_sigma = torch.log1p(self.bias_rho)
+            weight_sigma = torch.log1p(torch.exp(self.weight_rho))
+            bias_sigma = torch.log1p(torch.exp(self.bias_rho))
             weight = self.weight_mu + weight_sigma * torch.randn(self.weight_mu.size())
             bias = self.bias_mu + bias_sigma * torch.randn(self.bias_mu.size())
         else:
@@ -37,8 +37,8 @@ class BayesianLinear(nn.Module):
         return F.linear(input, weight, bias)
     
     def KL_div(self, prior_var):
-        weight_sigma = torch.log1p(self.weight_rho)
-        bias_sigma = torch.log1p(self.bias_rho)
+        weight_sigma = torch.log1p(torch.exp(self.weight_rho))
+        bias_sigma = torch.log1p(torch.exp(self.bias_rho))
         d = self.weight_mu.nelement() + self.bias_mu.nelement()
         return 0.5*(-torch.log(weight_sigma).sum() -torch.log(bias_sigma).sum() + (torch.sum(weight_sigma)+torch.sum(bias_sigma)) / prior_var \
                 + (torch.sum(self.weight_mu**2) + torch.sum(self.bias_mu**2)) / prior_var - d + d*np.log(prior_var))
@@ -408,7 +408,7 @@ class BayesianStochasticPolicy(nn.Module):
         dist = torch.distributions.Normal(mu, sigma)
         return torch.exp(dist.log_prob(gamma))
 
-    def loss(self, context, gamma, logging_pp, utility,
+    def loss(self, context, value, price, gamma, logging_pp, utility,
              winrate_model=None, use_WIS=True, policy_clipping=0.5):
         context = torch.Tensor(context)
         gamma = torch.Tensor(gamma)
@@ -422,7 +422,8 @@ class BayesianStochasticPolicy(nn.Module):
         
         elif self.loss_type == 'Actor-Critic': # PPO Actor-Critic
             x = torch.cat([context, gamma.reshape(-1,1)], dim=1)
-            utility_estimates = winrate_model(x)
+            winrate = winrate_model(x)
+            utility_estimates = winrate * (value - gamma * price)
             loss = - utility_estimates * target_pp / logging_pp
 
         elif self.loss_type == 'PPO-MC': # PPO Monte Carlo
@@ -435,7 +436,8 @@ class BayesianStochasticPolicy(nn.Module):
         elif self.loss_type == 'PPO-AC': # PPO Actor-Critic
             importance_weights = target_pp / logging_pp
             x = torch.cat([context, gamma.reshape(-1,1)], dim=1)
-            utility_estimates = winrate_model(x)
+            winrate = winrate_model(x)
+            utility_estimates = winrate * (value - gamma * price)
             clipped_importance_weights = torch.clip(importance_weights,
                                                     min=1.0-policy_clipping,
                                                     max=1.0+policy_clipping)
@@ -445,7 +447,8 @@ class BayesianStochasticPolicy(nn.Module):
             importance_weights = target_pp / logging_pp
 
             x = torch.cat([context, gamma.reshape(-1,1)], dim=1)
-            q_estimate = winrate_model(x)
+            winrate = winrate_model(x)
+            q_estimate = winrate * (value - gamma * price)
 
             IS_term = (utility - q_estimate) * torch.clip(importance_weights, min=1.0-policy_clipping, max=1.0+policy_clipping)
 
@@ -540,7 +543,7 @@ class StochasticPolicy(nn.Module):
         dist = torch.distributions.Normal(mu, sigma)
         return torch.exp(dist.log_prob(gamma))
 
-    def loss(self, context, gamma, logging_pp, utility,
+    def loss(self, context, value, price, gamma, logging_pp, utility,
              winrate_model=None, use_WIS=True, policy_clipping=0.5, entropy_factor=0.1):
         context = torch.Tensor(context)
         gamma = torch.Tensor(gamma)
@@ -554,7 +557,8 @@ class StochasticPolicy(nn.Module):
         
         elif self.loss_type == 'Actor-Critic': # PPO Actor-Critic
             x = torch.cat([context, gamma.reshape(-1,1)], dim=1)
-            utility_estimates = winrate_model(x)
+            winrate = winrate_model(x)
+            utility_estimates = winrate * (value - gamma * price)
             loss = - utility_estimates * target_pp / logging_pp
 
         elif self.loss_type == 'PPO-MC': # PPO Monte Carlo
@@ -567,7 +571,8 @@ class StochasticPolicy(nn.Module):
         elif self.loss_type == 'PPO-AC': # PPO Actor-Critic
             importance_weights = target_pp / logging_pp
             x = torch.cat([context, gamma.reshape(-1,1)], dim=1)
-            utility_estimates = winrate_model(x)
+            winrate = winrate_model(x)
+            utility_estimates = winrate * (value - gamma * price)
             clipped_importance_weights = torch.clip(importance_weights,
                                                     min=1.0-policy_clipping,
                                                     max=1.0+policy_clipping)
@@ -577,7 +582,8 @@ class StochasticPolicy(nn.Module):
             importance_weights = target_pp / logging_pp
 
             x = torch.cat([context, gamma.reshape(-1,1)], dim=1)
-            q_estimate = winrate_model(x)
+            winrate = winrate_model(x)
+            q_estimate = winrate * (value - gamma * price)
 
             IS_term = (utility - q_estimate) * torch.clip(importance_weights, min=1.0-policy_clipping, max=1.0+policy_clipping)
 
@@ -613,7 +619,7 @@ class DeterministicPolicy(nn.Module):
         self.train()
         epochs = 10000
         lr = 1e-3
-        optimizer = torch.optim.Adam(self.parameters(), lr=lr, weight_decay=1e-4, amsgrad=True)
+        optimizer = torch.optim.Adam(self.parameters(), lr=lr, weight_decay=1e-6, amsgrad=True)
         metric = torch.nn.MSELoss()
         losses = []
         best_epoch, best_loss = -1, np.inf
@@ -624,8 +630,8 @@ class DeterministicPolicy(nn.Module):
         for epoch in tqdm(range(int(epochs)), desc=f'Initialising Policy'):
             epoch_loss = 0
             for i in range(batch_num):
-                context_mini = context[i:i+batch_num]
-                gamma_mini = gamma[i:i+batch_num]
+                context_mini = context[i:i+B]
+                gamma_mini = gamma[i:i+B]
                 optimizer.zero_grad()
                 gamma_pred = self.ffn(context_mini)
                 loss = metric(gamma_pred.squeeze(), gamma_mini)
@@ -636,27 +642,28 @@ class DeterministicPolicy(nn.Module):
             if (best_loss - losses[-1]) > 1e-6:
                 best_epoch = epoch
                 best_loss = losses[-1]
-            elif epoch - best_epoch > 100:
+            elif epoch - best_epoch > 500:
                 print(f'Stopping at Epoch {epoch}')
                 break
 
     def forward(self, x):
         return self.ffn(x)
     
-    def loss(self, winrate_model, context):
+    def loss(self, winrate_model, context, value, price):
         gamma_pred = self(context).reshape(-1,1)
-        utility = winrate_model(torch.cat([context, gamma_pred], dim=1))
+        winrate = winrate_model(torch.cat([context, gamma_pred], dim=1))
+        utility = winrate * (value - price * gamma_pred)
         return torch.mean(utility)
 
 class BayesianDeterministicPolicy(nn.Module):
-    def __init__(self, context_dim, prior_var):
+    def __init__(self, context_dim, prior_var=None):
         super().__init__()
 
         self.linear1 = BayesianLinear(context_dim+3, 8)
         self.linear2 = BayesianLinear(8, 1)
         self.eval()
 
-        self.prior_var = prior_var
+        self.prior_var = prior_var # if this is None, the bidder's exploring via NoisyNet
         self.model_initialised = False
 
     def initialise_policy(self, context, gamma):
@@ -664,7 +671,7 @@ class BayesianDeterministicPolicy(nn.Module):
         self.train()
         epochs = 10000
         lr = 1e-3
-        optimizer = torch.optim.Adam(self.parameters(), lr=lr, weight_decay=1e-4, amsgrad=True)
+        optimizer = torch.optim.Adam(self.parameters(), lr=lr, weight_decay=1e-6, amsgrad=True)
         metric = torch.nn.MSELoss()
         losses = []
         best_epoch, best_loss = -1, np.inf
@@ -675,13 +682,12 @@ class BayesianDeterministicPolicy(nn.Module):
         for epoch in tqdm(range(int(epochs)), desc=f'Initialising Policy'):
             epoch_loss = 0
             for i in range(batch_num):
-                context_mini = context[i:i+batch_num]
-                gamma_mini = gamma[i:i+batch_num]
+                context_mini = context[i:i+B]
+                gamma_mini = gamma[i:i+B]
                 optimizer.zero_grad()
                 gamma_pred = F.relu(self.linear1(context_mini))
-                gamma_pred = F.sigmoid(self.linear2(gamma_pred))
+                gamma_pred = torch.sigmoid(self.linear2(gamma_pred))
                 loss = metric(gamma_pred.squeeze(), gamma_mini)
-                loss += (self.linear1.KL_div(self.prior_var) + self.linear2.KL_div(self.prior_var))/N
                 loss.backward()
                 optimizer.step()
                 epoch_loss += loss.item()
@@ -689,16 +695,26 @@ class BayesianDeterministicPolicy(nn.Module):
             if (best_loss - losses[-1]) > 1e-6:
                 best_epoch = epoch
                 best_loss = losses[-1]
-            elif epoch - best_epoch > 100:
+            elif epoch - best_epoch > 500:
                 print(f'Stopping at Epoch {epoch}')
                 break
+        
+        losses = np.array(losses)
+        if np.isnan(losses).any():
+            print('NAN DETECTED! in losses')
+            print(losses)
+            exit(1)
 
-    def forward(self, x):
-        x = F.relu(self.linear1(x, True))
-        return F.sigmoid(self.linear2(x, True))
+    def forward(self, x, sampling=True):
+        x = F.relu(self.linear1(x, sampling))
+        return torch.sigmoid(self.linear2(x, sampling))
     
-    def loss(self, winrate_model, context, N):
-        kl_penalty = (self.linear1.KL_div(self.prior_var) + self.linear2.KL_div(self.prior_var))/N
-        gamma_pred = self(context).reshape(-1,1)
-        utility = winrate_model(torch.cat([context, gamma_pred], dim=1))
-        return torch.mean(utility) + kl_penalty
+    def loss(self, winrate_model, context, value, price, N=None):
+        gamma_pred = self(context, True).reshape(-1,1)
+        winrate = winrate_model(torch.cat([context, gamma_pred], dim=1))
+        utility = winrate * (value - price * gamma_pred)
+        if self.prior_var is None:
+            return torch.mean(utility)
+        else:
+            kl_penalty = (self.linear1.KL_div(self.prior_var) + self.linear2.KL_div(self.prior_var))/N
+            return torch.mean(utility) + kl_penalty
