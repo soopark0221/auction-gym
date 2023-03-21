@@ -165,7 +165,7 @@ class ValueLearningBidder(Bidder):
         self.inference = inference
         self.gammas = []
         self.propensities = []
-        self.winrate_model = PyTorchWinRateEstimator()
+        self.winrate_model = PyTorchWinRateEstimator(noise=noise)
         self.bidding_policy = BidShadingPolicy(noise=noise) if inference == 'policy' else None
         self.model_initialised = False
         self.noise = noise
@@ -351,7 +351,7 @@ class SWAG_ValueLearningBidder(Bidder):
         self.inference = inference
         self.gammas = []
         self.propensities = []
-        self.winrate_model = PyTorchWinRateEstimator()
+        self.winrate_model = PyTorchWinRateEstimator(noise=noise)
         self.bidding_policy = BidShadingPolicy(noise=noise) if inference == 'policy' else None
         self.model_initialised = False
         self.swag_policy = SWAG(self.bidding_policy)
@@ -760,7 +760,7 @@ class DoublyRobustBidder(Bidder):
         self.prev_gamma = init_gamma
         self.gammas = []
         self.propensities = []
-        self.winrate_model = PyTorchWinRateEstimator()
+        self.winrate_model = PyTorchWinRateEstimator(noise=noise)
         self.bidding_policy = BidShadingContextualBandit(loss='Doubly Robust', winrate_model=self.winrate_model, noise=noise)
         self.model_initialised = False
         self.noise = noise
@@ -948,7 +948,7 @@ class SWAG_DoublyRobustBidder(Bidder):
         self.prev_gamma = init_gamma
         self.gammas = []
         self.propensities = []
-        self.winrate_model = PyTorchWinRateEstimator()
+        self.winrate_model = PyTorchWinRateEstimator(noise=noise)
         self.bidding_policy = BidShadingContextualBandit(loss='Doubly Robust', winrate_model=self.winrate_model)
         self.swag_policy = SWAG(self.bidding_policy)
         self.model_initialised = False
@@ -969,7 +969,7 @@ class SWAG_DoublyRobustBidder(Bidder):
             # Sample from the contextual bandit
             x = torch.Tensor([estimated_CTR, value])
             with torch.no_grad():
-                self.swag_policy.sample(scale=0.5)
+                self.swag_policy.sample(scale=0.1)
                 gamma, propensity = self.swag_policy(x)
                 gamma = torch.clip(gamma, 0.0, 1.0)
 

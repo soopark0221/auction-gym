@@ -161,7 +161,7 @@ if __name__ == '__main__':
     import re 
     parser = argparse.ArgumentParser()
     parser.add_argument('config', type=str, help='Path to experiment configuration file')
-    parser.add_argument('--expl', default='NA', choices=['NA','SWAG','NoisyNet','Simple'])
+    parser.add_argument('--expl', default='NA', choices=['NA','SWAG','NoisyNet','Gaussian'])
     args = parser.parse_args()
 
     # Parse configuration file

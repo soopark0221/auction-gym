@@ -52,15 +52,21 @@ class PyTorchLogisticRegression(torch.nn.Module):
 
 
 class PyTorchWinRateEstimator(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, noise=False):
         super(PyTorchWinRateEstimator, self).__init__()
         # Input  P(click), the value, and the bid shading factor
-        self.model = torch.nn.Sequential(
-            torch.nn.Linear(3, 1, bias=True),
-            torch.nn.Sigmoid()
+        self.noise = noise
+        if self.noise == False:
+            self.model = torch.nn.Sequential(
+                torch.nn.Linear(3, 1, bias=True),
+                torch.nn.Sigmoid()
+        )
+        else:
+            self.model = torch.nn.Sequential(
+                NoisyLinear(3, 1, bias=True),
+                torch.nn.Sigmoid()
         )
         self.eval()
-
     def forward(self, x):
         return self.model(x)
 
