@@ -60,7 +60,7 @@ class PyTorchLogisticRegressionAllocator(Allocator):
         with torch.no_grad():
             for item in range(self.response_model.m.shape[0]):
                 item_mask = items == item
-                X_item = torch.Tensor(contexts[item_mask])
+                X_item = torch.Tensor(contexts[item_mask]).to(self.device)
                 self.response_model.laplace_approx(X_item, item)
             self.response_model.update_prior()
 

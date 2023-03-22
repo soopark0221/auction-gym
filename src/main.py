@@ -165,6 +165,9 @@ if __name__ == '__main__':
     # Parse configuration file
     rng, config, agent_configs, agents2items, agents2item_values, num_runs, max_slots, embedding_size, embedding_var, obs_embedding_size = parse_config(args.config)
 
+    os.environ["CUDA_VISIBLE_DEVICES"]= "1"
+    print("running in {}".format('cuda' if torch.cuda.is_available() else 'cpu'))
+
     # Plotting config
     FIGSIZE = (8, 5)
     FONTSIZE = 14

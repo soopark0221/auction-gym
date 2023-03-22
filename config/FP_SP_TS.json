@@ -27,5 +27,6 @@
             }
       }
     }],
-    "output_dir": "results/FP_DDPG_TS_FO/"
+    "output_dir": "results/FP_DDPG_TS_FO/",
+    "network_architecture": "input-8-output"
   }

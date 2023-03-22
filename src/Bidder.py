@@ -742,7 +742,7 @@ class ValueSamplingBidder(Bidder):
         losses = []
         best_epoch, best_loss = -1, np.inf
         N = 8192
-        B = 128 
+        B = 8192
         batch_num = int(N/B)
 
         for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
@@ -896,7 +896,7 @@ class StochasticPolicyBidder(Bidder):
             scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=256, min_lr=1e-7, factor=0.2, verbose=True)
             losses = []
             N = 8192
-            B = 128
+            B = 8192
             batch_num = int(N/B)
 
             for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
@@ -949,7 +949,7 @@ class StochasticPolicyBidder(Bidder):
 
         losses = []
         N = 8192
-        B = 128
+        B = 8192
         batch_num = int(N/B)
         best_epoch, best_loss = -1, np.inf
 
@@ -1095,7 +1095,7 @@ class DDPGBidder(Bidder):
         losses = []
         best_epoch, best_loss = -1, np.inf
         N = 8192
-        B = 128
+        B = 8192
         batch_num = int(N/B)
 
         for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
@@ -1142,7 +1142,7 @@ class DDPGBidder(Bidder):
         losses = []
         best_epoch, best_loss = -1, np.inf
         N = 8192
-        B = 128
+        B = 8192
         batch_num = int(N/B)
 
         self.winrate_model.requires_grad_(False)

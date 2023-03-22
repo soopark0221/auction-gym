@@ -2,20 +2,21 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
-# from numba import jit
+from numba import jit
 from torch.nn import functional as F
 from tqdm import tqdm
 
 
-# @jit(nopython=True)
-# def sigmoid(x):
-#     return 1.0 / (1.0 + np.exp(-x))
+@jit(nopython=True)
+def sigmoid(x):
+    return 1.0 / (1.0 + np.exp(-x))
 
 class BayesianLinear(nn.Module):
     def __init__(self, in_features, out_features):
         super().__init__()
         self.input_dim = in_features
         self.output_dim = out_features
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
         self.weight_mu = nn.Parameter(torch.Tensor(out_features, in_features))
         self.weight_rho = nn.Parameter(torch.Tensor(out_features, in_features))
@@ -27,8 +28,8 @@ class BayesianLinear(nn.Module):
         if self.training or sample:
             weight_sigma = torch.log1p(torch.exp(self.weight_rho))
             bias_sigma = torch.log1p(torch.exp(self.bias_rho))
-            weight = self.weight_mu + weight_sigma * torch.randn(self.weight_mu.size())
-            bias = self.bias_mu + bias_sigma * torch.randn(self.bias_mu.size())
+            weight = self.weight_mu + weight_sigma * torch.randn(self.weight_mu.size()).to(self.device)
+            bias = self.bias_mu + bias_sigma * torch.randn(self.bias_mu.size()).to(self.device)
         else:
             weight = self.weight_mu
             bias = self.bias_mu
@@ -51,17 +52,18 @@ class BayesianLinear(nn.Module):
 class PyTorchLogisticRegression(torch.nn.Module):
     def __init__(self, n_dim, n_items):
         super(PyTorchLogisticRegression, self).__init__()
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.m = torch.nn.Parameter(torch.Tensor(n_items, n_dim + 1))
         torch.nn.init.normal_(self.m, mean=0.0, std=1.0)
-        self.prev_iter_m = self.m.detach().clone()
-        self.q = torch.ones((n_items, n_dim + 1))
+        self.prev_iter_m = self.m.detach().clone().to(self.device)
+        self.q = torch.ones((n_items, n_dim + 1)).to(self.device)
         self.logloss = torch.nn.BCELoss(reduction='sum')
         self.eval()
 
     def forward(self, x, sample=False):
         ''' Predict outcome for all items, allow for posterior sampling '''
         if sample:
-            return torch.sigmoid(F.linear(x, self.m + torch.normal(mean=0.0, std=1.0/torch.sqrt(self.q))))
+            return torch.sigmoid(F.linear(x, self.m + torch.normal(mean=0.0, std=1.0/torch.sqrt(self.q).to(self.device))))
         else:
             return torch.sigmoid(F.linear(x, self.m))
 
@@ -346,6 +348,7 @@ class BayesianStochasticPolicy(nn.Module):
         self.sigma_head = BayesianLinear(8,1)
         self.eval()
 
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.min_sigma = 1e-2
         self.loss_type = loss_type
         self.model_initialised = False
@@ -360,7 +363,7 @@ class BayesianStochasticPolicy(nn.Module):
         losses = []
         best_epoch, best_loss = -1, np.inf
         N = 8192
-        B = 128
+        B = 8192
         batch_num = int(N/B)
 
         for epoch in tqdm(range(int(epochs)), desc=f'Initialising Policy'):
@@ -371,7 +374,7 @@ class BayesianStochasticPolicy(nn.Module):
                 optimizer.zero_grad()
                 gamma_mu = F.sigmoid(self.mu_head(F.relu(self.base(context_mini))))
                 gamma_sigma = F.sigmoid(self.sigma_head(F.relu(self.base(context_mini))))
-                loss = metric(gamma_mu.squeeze(), gamma_mini)+ metric(gamma_sigma.squeeze(), torch.ones_like(gamma_mini) * 0.1)
+                loss = metric(gamma_mu.squeeze(), gamma_mini)+ metric(gamma_sigma.squeeze(), torch.ones_like(gamma_mini).to(self.device) * 0.1)
                 loss.backward()
                 optimizer.step()
                 epoch_loss += loss.item()
@@ -409,8 +412,8 @@ class BayesianStochasticPolicy(nn.Module):
 
     def loss(self, context, value, price, gamma, logging_pp, utility,
              winrate_model=None, use_WIS=True, policy_clipping=0.5):
-        context = torch.Tensor(context)
-        gamma = torch.Tensor(gamma)
+        context = torch.Tensor(context).to(self.device)
+        gamma = torch.Tensor(gamma).to(self.device)
         target_pp = self.normal_pdf(context, gamma)
 
         if self.loss_type == 'REINFORCE': # vanilla off-policy REINFORCE
@@ -472,6 +475,7 @@ class StochasticPolicy(nn.Module):
             self.dropout_sigma = nn.Dropout(dropout)
             self.train()
 
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.min_sigma = 1e-2
         self.loss_type = loss_type
         self.model_initialised = False
@@ -500,7 +504,7 @@ class StochasticPolicy(nn.Module):
         losses = []
         best_epoch, best_loss = -1, np.inf
         N = 8192
-        B = 128
+        B = 8192
         batch_num = int(N/B)
 
         for epoch in tqdm(range(int(epochs)), desc=f'Initialising Policy'):
@@ -511,7 +515,7 @@ class StochasticPolicy(nn.Module):
                 optimizer.zero_grad()
                 gamma_mu = self.mu(context_mini)
                 gamma_sigma = self.sigma(context_mini)
-                loss = metric(gamma_mu.squeeze(), gamma_mini)+ metric(gamma_sigma.squeeze(), torch.ones_like(gamma_mini) * 0.1)
+                loss = metric(gamma_mu.squeeze(), gamma_mini)+ metric(gamma_sigma.squeeze(), torch.ones_like(gamma_mini).to(self.device) * 0.1)
                 loss.backward()
                 optimizer.step()  
                 epoch_loss += loss.item()
@@ -544,8 +548,8 @@ class StochasticPolicy(nn.Module):
 
     def loss(self, context, value, price, gamma, logging_pp, utility,
              winrate_model=None, use_WIS=True, policy_clipping=0.5, entropy_factor=0.0):
-        context = torch.Tensor(context)
-        gamma = torch.Tensor(gamma)
+        context = torch.Tensor(context).to(self.device)
+        gamma = torch.Tensor(gamma).to(self.device)
         target_pp = self.normal_pdf(context, gamma)
 
         if self.loss_type == 'REINFORCE': # vanilla off-policy REINFORCE
@@ -623,7 +627,7 @@ class DeterministicPolicy(nn.Module):
         losses = []
         best_epoch, best_loss = -1, np.inf
         N = 8192
-        B = 128
+        B = 8192
         batch_num = int(N/B)
 
         for epoch in tqdm(range(int(epochs)), desc=f'Initialising Policy'):
@@ -675,7 +679,7 @@ class BayesianDeterministicPolicy(nn.Module):
         losses = []
         best_epoch, best_loss = -1, np.inf
         N = 8192
-        B = 128
+        B = 8192
         batch_num = int(N/B)
 
         for epoch in tqdm(range(int(epochs)), desc=f'Initialising Policy'):
