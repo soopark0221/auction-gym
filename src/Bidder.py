@@ -653,6 +653,8 @@ class ValueSamplingBidder(Bidder):
                           'NoisyNet']
         self.method = method
         self.gammas = []
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
         if method=='Epsilon-greedy':
             self.winrate_model = NeuralWinRateEstimator(context_dim)
             self.eps = epsilon
@@ -666,6 +668,7 @@ class ValueSamplingBidder(Bidder):
             self.winrate_model = MCDropoutWinRateEstimator(context_dim)
         elif method=='NoisyNet':
             self.winrate_model = NoisyNetWinRateEstimator(context_dim)
+        self.winrate_model.to(self.device)
         self.model_initialised = False
         super(ValueSamplingBidder, self).__init__(rng)
 
@@ -680,15 +683,15 @@ class ValueSamplingBidder(Bidder):
             n_values_search = 128
             gamma_grid = np.linspace(0.1, 1 ,n_values_search)
             x = torch.Tensor(np.hstack((np.tile(context, ((n_values_search, 1))), np.tile(estimated_CTR, (n_values_search, 1)),
-                                        np.tile(value, (n_values_search, 1)), gamma_grid.reshape(-1,1))))
+                                        np.tile(value, (n_values_search, 1)), gamma_grid.reshape(-1,1)))).to(self.device)
 
             if self.method=='Bayes by Backprop' or self.method=='NoisyNet':
-                prob_win = self.winrate_model(x, True).detach().numpy().ravel()
+                prob_win = self.winrate_model(x, True).numpy(force=True).ravel()
             elif self.method=='MC Dropout':
                 with torch.no_grad():
-                    prob_win = self.winrate_model(x).detach().numpy().ravel()
+                    prob_win = self.winrate_model(x).numpy(force=True).ravel()
             else:
-                prob_win = self.winrate_model(x).detach().numpy().ravel()
+                prob_win = self.winrate_model(x).numpy(force=True).ravel()
 
             # U = W (V - P)
             expected_value = bid
@@ -716,7 +719,7 @@ class ValueSamplingBidder(Bidder):
         # Compute net utility
         utilities = np.zeros_like(values)
         utilities[won_mask] = (values[won_mask] * outcomes[won_mask]) - prices[won_mask]
-        utilities = torch.Tensor(utilities)
+        utilities = torch.Tensor(utilities).to(self.device)
 
         # Augment data with samples: if you shade 100%, you will lose
         # If you won now, you would have also won if you bid higher
@@ -742,15 +745,15 @@ class ValueSamplingBidder(Bidder):
         losses = []
         best_epoch, best_loss = -1, np.inf
         N = 8192
-        B = 8192
+        B = 128
         batch_num = int(N/B)
 
         for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
             epoch_loss = 0
 
             for i in range(batch_num):
-                X_mini = X[i:i+B]
-                y_mini = y[i:i+B]
+                X_mini = X[i:i+B].to(self.device)
+                y_mini = y[i:i+B].to(self.device)
                 optimizer.zero_grad()
 
                 if self.method=='Bayes by Backprop':
@@ -809,11 +812,13 @@ class StochasticPolicyBidder(Bidder):
         self.MAP_propensity = True
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        assert loss_type in ['REINFORCE', 'Actor-Critic', 'PPO_MC', 'PPO_AC', 'DR']
+        assert loss_type in ['REINFORCE', 'Actor-Critic', 'PPO-MC', 'PPO-AC', 'DR']
         self.loss_type = loss_type
-        if loss_type in ['Actor-Critic', 'PPO_AC', 'DR']:
+        if loss_type in ['Actor-Critic', 'PPO-AC', 'DR']:
             self.winrate_model = NeuralWinRateEstimator(context_dim)
             self.winrate_model.to(self.device)
+        else:
+            self.winrate_model = None
         # Vanilla IS or weighted IS?
         if self.loss_type=='REINFORCE':
             self.use_WIS = use_WIS
@@ -821,7 +826,7 @@ class StochasticPolicyBidder(Bidder):
         assert exploration_method in ['Entropy Regularization', 'NoisyNet', 'SWAG', 'MC Dropout']
         self.exploration_method = exploration_method
         if self.exploration_method=='NoisyNet':
-            self.bidding_policy = BayesianStochasticPolicy(context_dim)
+            self.bidding_policy = BayesianStochasticPolicy(context_dim, loss_type)
         elif self.exploration_method=='SWAG':
             self.bidding_policy = StochasticPolicy(context_dim, loss_type)
             self.swag_policy = SWAG(self.bidding_policy)
@@ -847,9 +852,13 @@ class StochasticPolicyBidder(Bidder):
             x = torch.Tensor(np.concatenate([context, np.array(estimated_CTR).reshape(1), np.array(value).reshape(1)])).to(self.device)
             with torch.no_grad():
                 if self.exploration_method=='NoisyNet':
-                    gamma, propensity = self.bidding_policy(x, sampling=True)
+                    gamma, propensity = self.bidding_policy(x, self.MAP_propensity)
                 elif self.exploration_method=='SWAG':
+                    self.swag_policy.sample()
                     gamma, propensity = self.swag_policy(x)
+                    if self.MAP_propensity:
+                        self.swag_policy.sample(add_swag=False)
+                        _, propensity = self.bidding_policy.normal_pdf(x, gamma)
                 else:
                     gamma, propensity = self.bidding_policy(x)
                 gamma = torch.clip(gamma, 0.0, 1.0)
@@ -941,7 +950,8 @@ class StochasticPolicyBidder(Bidder):
 
         # Fit the model
         self.bidding_policy.train()
-        self.winrate_model.requires_grad_(False)
+        if self.winrate_model is not None:
+            self.winrate_model.requires_grad_(False)
         epochs = 10000
         lr = 1e-3
         optimizer = torch.optim.Adam(self.bidding_policy.parameters(), lr=lr, weight_decay=1e-4, amsgrad=True)
@@ -997,7 +1007,8 @@ class StochasticPolicyBidder(Bidder):
             exit(1)
 
         self.bidding_policy.eval()
-        self.winrate_model.requires_grad_(True)
+        if self.winrate_model is not None:
+            self.winrate_model.requires_grad_(True)
         self.model_initialised = True
         self.bidding_policy.model_initialised = True
 
@@ -1024,14 +1035,15 @@ class DDPGBidder(Bidder):
 
         self.winrate_model = NeuralWinRateEstimator(context_dim).to(self.device)
 
-        assert exploration_method in ['Gaussian Noise', 'NoisyNet', 'Bayes by Backprop', 'MC Dropout']
+        assert exploration_method in ['Gaussian Noise', 'NoisyNet', 'Bayes by Backprop', 'SWAG']
         self.exploration_method = exploration_method
         if self.exploration_method=='NoisyNet':
             self.bidding_policy = BayesianDeterministicPolicy(context_dim)
         elif self.exploration_method=='Bayes by Backprop':
             self.bidding_policy = BayesianDeterministicPolicy(context_dim, prior_var)
-        elif self.exploration_method=='MC Dropout':
-            raise NotImplementedError
+        elif self.exploration_method=='SWAG':
+            self.bidding_policy = DeterministicPolicy(context_dim)
+            self.SWAG = SWAG(self.bidding_policy)
         else:
             self.bidding_policy = DeterministicPolicy(context_dim)
             self.noise = noise
@@ -1050,6 +1062,8 @@ class DDPGBidder(Bidder):
             # Sample from the contextual bandit
             x = torch.Tensor(np.concatenate([context, np.array(estimated_CTR).reshape(1), np.array(value).reshape(1)])).to(self.device)
             with torch.no_grad():
+                if self.exploration_method=='SWAG':
+                    self.SWAG.sample()
                 gamma = self.bidding_policy(x)
                 gamma = torch.clip(gamma, 0.0, 1.0)
         

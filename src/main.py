@@ -270,7 +270,7 @@ if __name__ == '__main__':
         plt.grid(True, 'major', 'y', ls='--', lw=.5, c='k', alpha=.3)
         plt.legend(loc='upper left', bbox_to_anchor=(-.05, -.15), fontsize=FONTSIZE, ncol=3)
         plt.tight_layout()
-        plt.savefig(f"{output_dir}/{measure_name.replace(' ', '_')}_{rounds_per_iter}_rounds_{num_iter}_iters_{num_runs}_runs_{obs_embedding_size}_emb_of_{embedding_size}.pdf", bbox_inches='tight')
+        plt.savefig(f"{output_dir}/{measure_name.replace(' ', '_')}_{rounds_per_iter}_rounds_{num_iter}_iters_{num_runs}_runs_{obs_embedding_size}_emb_of_{embedding_size}.png", bbox_inches='tight')
         # plt.show()
         return df
 
@@ -328,7 +328,7 @@ if __name__ == '__main__':
         plt.yticks(fontsize=FONTSIZE - 2)
         plt.grid(True, 'major', 'y', ls='--', lw=.5, c='k', alpha=.3)
         plt.tight_layout()
-        plt.savefig(f"{output_dir}/{measure_name.replace(' ', '_')}_{rounds_per_iter}_rounds_{num_iter}_iters_{num_runs}_runs_{obs_embedding_size}_emb_of_{embedding_size}.pdf", bbox_inches='tight')
+        plt.savefig(f"{output_dir}/{measure_name.replace(' ', '_')}_{rounds_per_iter}_rounds_{num_iter}_iters_{num_runs}_runs_{obs_embedding_size}_emb_of_{embedding_size}.png", bbox_inches='tight')
         # plt.show()
         return df
 

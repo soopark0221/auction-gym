@@ -18,22 +18,29 @@ class BayesianLinear(nn.Module):
         self.output_dim = out_features
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
-        self.weight_mu = nn.Parameter(torch.Tensor(out_features, in_features))
-        self.weight_rho = nn.Parameter(torch.Tensor(out_features, in_features))
+        self.weight_mu = nn.Parameter(torch.empty((out_features, in_features)))
+        self.weight_rho = nn.Parameter(torch.empty((out_features, in_features)))
         
-        self.bias_mu = nn.Parameter(torch.Tensor(out_features))
-        self.bias_rho = nn.Parameter(torch.Tensor(out_features))
+        self.bias_mu = nn.Parameter(torch.empty((out_features,)))
+        self.bias_rho = nn.Parameter(torch.empty((out_features,)))
+        self.reset_parameters()
+    
+    def reset_parameters(self):
+        nn.init.kaiming_uniform_(self.weight_mu)
+        nn.init.kaiming_uniform_(self.weight_rho)
+        nn.init.uniform_(self.bias_mu)
+        nn.init.uniform_(self.bias_rho)
 
     def forward(self, input, sample=True):
         if self.training or sample:
             weight_sigma = torch.log1p(torch.exp(self.weight_rho))
             bias_sigma = torch.log1p(torch.exp(self.bias_rho))
-            weight = self.weight_mu + weight_sigma * torch.randn(self.weight_mu.size()).to(self.device)
-            bias = self.bias_mu + bias_sigma * torch.randn(self.bias_mu.size()).to(self.device)
+            weight = self.weight_mu + weight_sigma * torch.randn_like(self.weight_mu)
+            bias = self.bias_mu + bias_sigma * torch.randn_like(self.bias_mu)
         else:
             weight = self.weight_mu
             bias = self.bias_mu
-
+        
         return F.linear(input, weight, bias)
     
     def KL_div(self, prior_var):
@@ -165,7 +172,7 @@ class NoisyNetWinRateEstimator(nn.Module):
         self.metric = nn.BCEWithLogitsLoss()
         self.eval()
 
-    def forward(self, x, sample=False):
+    def forward(self, x, sample=True):
         x = self.relu(self.linear1(x,sample))
         return torch.sigmoid(self.linear2(x, sample))
     
@@ -343,9 +350,9 @@ class BayesianStochasticPolicy(nn.Module):
     def __init__(self, context_dim, loss_type):
         super().__init__()
 
-        self.base = BayesianLinear(context_dim+3, 8)
-        self.mu_head = BayesianLinear(8, 1)
-        self.sigma_head = BayesianLinear(8,1)
+        self.base = BayesianLinear(context_dim+3, 16)
+        self.mu_head = BayesianLinear(16, 1)
+        self.sigma_head = BayesianLinear(16, 1)
         self.eval()
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -372,8 +379,8 @@ class BayesianStochasticPolicy(nn.Module):
                 context_mini = contexts[i:i+B]
                 gamma_mini = gammas[i:i+B]
                 optimizer.zero_grad()
-                gamma_mu = F.sigmoid(self.mu_head(F.relu(self.base(context_mini))))
-                gamma_sigma = F.sigmoid(self.sigma_head(F.relu(self.base(context_mini))))
+                gamma_mu = torch.sigmoid(self.mu_head(torch.relu(self.base(context_mini))))
+                gamma_sigma = torch.sigmoid(self.sigma_head(torch.relu(self.base(context_mini))))
                 loss = metric(gamma_mu.squeeze(), gamma_mini)+ metric(gamma_sigma.squeeze(), torch.ones_like(gamma_mini).to(self.device) * 0.1)
                 loss.backward()
                 optimizer.step()
@@ -382,14 +389,14 @@ class BayesianStochasticPolicy(nn.Module):
             if (best_loss - losses[-1]) > 1e-6:
                 best_epoch = epoch
                 best_loss = losses[-1]
-            elif epoch - best_epoch > 100:
+            elif epoch - best_epoch > 500:
                 print(f'Stopping at Epoch {epoch}')
                 break
 
-    def forward(self, x, MAP_propensity):
-        x = torch.relu(self.base(x))
-        mu = torch.sigmoid(self.mu_head(x)).squeeze()
-        sigma = F.sigmoid(self.sigma_head(x)).squeeze() + self.min_sigma
+    def forward(self, x, MAP_propensity=True):
+        hidden = torch.relu(self.base(x))
+        mu = torch.sigmoid(self.mu_head(hidden)).squeeze()
+        sigma = torch.sigmoid(self.sigma_head(hidden)).squeeze() + self.min_sigma
         dist = torch.distributions.normal.Normal(mu, sigma)
         gamma = dist.rsample()
         if MAP_propensity:
@@ -408,13 +415,13 @@ class BayesianStochasticPolicy(nn.Module):
         mu = torch.sigmoid(self.mu_head(x)).squeeze()
         sigma = torch.sigmoid(self.sigma_head(x)).squeeze() + self.min_sigma
         dist = torch.distributions.Normal(mu, sigma)
-        return torch.exp(dist.log_prob(gamma))
+        return dist, torch.exp(dist.log_prob(gamma))
 
     def loss(self, context, value, price, gamma, logging_pp, utility,
              winrate_model=None, use_WIS=True, policy_clipping=0.5):
         context = torch.Tensor(context).to(self.device)
         gamma = torch.Tensor(gamma).to(self.device)
-        target_pp = self.normal_pdf(context, gamma)
+        dist, target_pp = self.normal_pdf(context, gamma)
 
         if self.loss_type == 'REINFORCE': # vanilla off-policy REINFORCE
             importance_weights = target_pp / logging_pp
@@ -452,12 +459,17 @@ class BayesianStochasticPolicy(nn.Module):
             winrate = winrate_model(x)
             q_estimate = winrate * (value - gamma * price)
 
-            IS_term = (utility - q_estimate) * torch.clip(importance_weights, min=1.0-policy_clipping, max=1.0+policy_clipping)
+            IS_clip = (utility - q_estimate) * torch.clip(importance_weights, min=1.0-policy_clipping, max=1.0+policy_clipping)
+            IS = (utility - q_estimate) * importance_weights
+            ppo_object = torch.min(IS, IS_clip)
 
             # Monte Carlo approximation of V(context)
-            v_estimate = q_estimate
+            with torch.no_grad():
+                sampled_gamma = dist.sample()
+                x = torch.cat([context, sampled_gamma.reshape(-1,1)], dim=1)
+                v_estimate = winrate_model(x) * (value - sampled_gamma * value)
 
-            loss = -(IS_term + v_estimate).mean()
+            loss = -(ppo_object + v_estimate).mean()
         
         return loss
 
@@ -544,13 +556,13 @@ class StochasticPolicy(nn.Module):
         mu = self.mu(x)
         sigma = self.sigma(x)
         dist = torch.distributions.Normal(mu, sigma)
-        return torch.exp(dist.log_prob(gamma))
+        return dist, torch.exp(dist.log_prob(gamma))
 
     def loss(self, context, value, price, gamma, logging_pp, utility,
              winrate_model=None, use_WIS=True, policy_clipping=0.5, entropy_factor=0.0):
         context = torch.Tensor(context).to(self.device)
         gamma = torch.Tensor(gamma).to(self.device)
-        target_pp = self.normal_pdf(context, gamma)
+        dist, target_pp = self.normal_pdf(context, gamma)
 
         if self.loss_type == 'REINFORCE': # vanilla off-policy REINFORCE
             importance_weights = target_pp / logging_pp
@@ -588,12 +600,17 @@ class StochasticPolicy(nn.Module):
             winrate = winrate_model(x)
             q_estimate = winrate * (value - gamma * price)
 
-            IS_term = (utility - q_estimate) * torch.clip(importance_weights, min=1.0-policy_clipping, max=1.0+policy_clipping)
+            IS_clip = (utility - q_estimate) * torch.clip(importance_weights, min=1.0-policy_clipping, max=1.0+policy_clipping)
+            IS = (utility - q_estimate) * importance_weights
+            ppo_object = torch.min(IS, IS_clip)
 
             # Monte Carlo approximation of V(context)
-            v_estimate = q_estimate
+            with torch.no_grad():
+                sampled_gamma = dist.rsample()
+                x = torch.cat([context, sampled_gamma.reshape(-1,1)], dim=1)
+                v_estimate = winrate_model(x) * (value - sampled_gamma * value)
 
-            loss = -(IS_term + v_estimate).mean()
+            loss = -(ppo_object + v_estimate).mean()
         
         loss -= entropy_factor * self.entropy(context)
         
@@ -688,7 +705,7 @@ class BayesianDeterministicPolicy(nn.Module):
                 context_mini = context[i:i+B]
                 gamma_mini = gamma[i:i+B]
                 optimizer.zero_grad()
-                gamma_pred = F.relu(self.linear1(context_mini))
+                gamma_pred = torch.relu(self.linear1(context_mini))
                 gamma_pred = torch.sigmoid(self.linear2(gamma_pred))
                 loss = metric(gamma_pred.squeeze(), gamma_mini)
                 loss.backward()
@@ -709,7 +726,7 @@ class BayesianDeterministicPolicy(nn.Module):
             exit(1)
 
     def forward(self, x, sampling=True):
-        x = F.relu(self.linear1(x, sampling))
+        x = torch.relu(self.linear1(x, sampling))
         return torch.sigmoid(self.linear2(x, sampling))
     
     def loss(self, winrate_model, context, value, price, N=None):
