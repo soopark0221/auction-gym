@@ -50,7 +50,7 @@ def parse_config(path):
         if 'num_copies' in agent_config.keys():
             for i in range(1, agent_config['num_copies'] + 1):
                 agent_config_copy = deepcopy(agent_config)
-                agent_config_copy['name'] += f' {num_agents + 1}'
+                agent_config_copy['name'] += f' {i}'
                 agent_configs.append(agent_config_copy)
                 num_agents += 1
         else:
@@ -141,6 +141,9 @@ def simulation_run():
             agent2CTR_RMSE[agent.name].append(agent.get_CTR_RMSE())
             agent2CTR_bias[agent.name].append(agent.get_CTR_bias())
 
+            agent2bidding_var[agent.name].append(agent.get_bidding_var())
+            agent2uncertainty[agent.name].append(agent.get_uncertainty())
+
             if isinstance(agent.bidder, PolicyLearningBidder) or isinstance(agent.bidder, DoublyRobustBidder):
                 agent2gamma[agent.name].append(torch.mean(torch.Tensor(agent.bidder.gammas)).detach().item())
             elif not agent.bidder.truthful:
@@ -160,12 +163,13 @@ if __name__ == '__main__':
     # Parse commandline arguments
     parser = argparse.ArgumentParser()
     parser.add_argument('config', type=str, help='Path to experiment configuration file')
+    parser.add_argument('--cuda', type=str, default='0')
     args = parser.parse_args()
 
     # Parse configuration file
     rng, config, agent_configs, agents2items, agents2item_values, num_runs, max_slots, embedding_size, embedding_var, obs_embedding_size = parse_config(args.config)
 
-    os.environ["CUDA_VISIBLE_DEVICES"]= "1"
+    os.environ["CUDA_VISIBLE_DEVICES"]= args.cuda
     print("running in {}".format('cuda' if torch.cuda.is_available() else 'cpu'))
 
     # Plotting config
@@ -184,6 +188,9 @@ if __name__ == '__main__':
     run2agent2CTR_RMSE = {}
     run2agent2CTR_bias = {}
     run2agent2gamma = {}
+
+    run2agent2bidding_var = {}
+    run2agent2uncertainty = {}
 
     run2auction_revenue = {}
 
@@ -206,6 +213,9 @@ if __name__ == '__main__':
         agent2CTR_bias = defaultdict(list)
         agent2gamma = defaultdict(list)
 
+        agent2bidding_var = defaultdict(list)
+        agent2uncertainty = defaultdict(list)
+
         auction_revenue = []
 
         # Run simulation (with global parameters -- fine for the purposes of this script)
@@ -224,6 +234,9 @@ if __name__ == '__main__':
         run2agent2CTR_bias[run] = agent2CTR_bias
         run2agent2gamma[run] = agent2gamma
 
+        run2agent2bidding_var[run] = agent2bidding_var
+        run2agent2uncertainty[run] = agent2uncertainty
+
         run2auction_revenue[run] = auction_revenue
 
     output_dir = output_dir + time.strftime('%y%m%d-%H%M%S')
@@ -241,6 +254,19 @@ if __name__ == '__main__':
                     df_rows['Agent'].append(agent)
                     df_rows['Iteration'].append(iteration)
                     df_rows[measure_name].append(measure)
+        return pd.DataFrame(df_rows)
+    
+    def vector_of_measure_per_agent2df(run2agent2vector_measure, measure_name):
+        df_rows = {'Run': [], 'Agent': [], 'Iteration': [], measure_name: []}
+        for run, agent2measure in run2agent2vector_measure.items():
+            for agent, vectors in agent2measure.items():
+                for iteration, vector in enumerate(vectors):
+                    for index, measure in enumerate(vector):
+                        df_rows['Run'].append(run)
+                        df_rows['Agent'].append(agent)
+                        df_rows['Iteration'].append(iteration)
+                        df_rows['Parameter'].append(index)
+                        df_rows[measure_name].append(measure)
         return pd.DataFrame(df_rows)
 
     def plot_measure_per_agent(run2agent2measure, measure_name, cumulative=False, log_y=False, yrange=None, optimal=None):
@@ -273,6 +299,38 @@ if __name__ == '__main__':
         plt.savefig(f"{output_dir}/{measure_name.replace(' ', '_')}_{rounds_per_iter}_rounds_{num_iter}_iters_{num_runs}_runs_{obs_embedding_size}_emb_of_{embedding_size}.png", bbox_inches='tight')
         # plt.show()
         return df
+    
+    def plot_vector_measure_per_agent(run2agent2vector_measure, measure_name, cumulative=False, log_y=False, yrange=None, optimal=None):
+        # Generate DataFrame for Seaborn
+        if type(run2agent2vector_measure) != pd.DataFrame:
+            df = measure_per_agent2df(run2agent2vector_measure, measure_name)
+        else:
+            df = run2agent2vector_measure
+
+        df = df[~df['Agent'].str.startswith('Competitor')]
+
+        fig, axes = plt.subplots(figsize=FIGSIZE)
+        plt.title(f'{measure_name} Distribution', fontsize=FONTSIZE + 2)
+        min_measure, max_measure = 0.0, 0.0
+        sns.boxplot(data=df, y="Iteration", x=measure_name, hue="Agent", ax=axes)
+        plt.xticks(fontsize=FONTSIZE - 2)
+        plt.ylabel('Iteration', fontsize=FONTSIZE)
+        if optimal is not None:
+            plt.axhline(optimal, ls='--', color='gray', label='Optimal')
+            min_measure = min(min_measure, optimal)
+        if log_y:
+            plt.yscale('log')
+        if yrange is None:
+            factor = 1.1 if min_measure < 0 else 0.9
+            # plt.ylim(min_measure * factor, max_measure * 1.1)
+        else:
+            plt.ylim(yrange[0], yrange[1])
+        plt.yticks(fontsize=FONTSIZE - 2)
+        plt.legend(loc='lower right', fontsize=FONTSIZE, ncol=3)
+        plt.tight_layout()
+        plt.savefig(f"{output_dir}/{measure_name.replace(' ', '_')}_{rounds_per_iter}_rounds_{num_iter}_iters_{num_runs}_runs_{obs_embedding_size}_emb_of_{embedding_size}.png", bbox_inches='tight')
+        # plt.show()
+        return df
 
     net_utility_df = plot_measure_per_agent(run2agent2net_utility, 'Net Utility').sort_values(['Agent', 'Run', 'Iteration'])
     net_utility_df.to_csv(f'{output_dir}/net_utility_{rounds_per_iter}_rounds_{num_iter}_iters_{num_runs}_runs_{obs_embedding_size}_emb_of_{embedding_size}.csv', index=False)
@@ -298,6 +356,14 @@ if __name__ == '__main__':
     plot_measure_per_agent(run2agent2CTR_RMSE, 'CTR RMSE', log_y=True)
     plot_measure_per_agent(run2agent2CTR_bias, 'CTR Bias', optimal=1.0) #, yrange=(.5, 5.0))
 
+    try:
+        bidding_var_df = plot_measure_per_agent(run2agent2bidding_var, 'Variance of Policy')
+        uncertainty_df = plot_vector_measure_per_agent(run2agent2uncertainty, 'Uncertainty in Parameters')
+        bidding_var_df.to_scv(f'{output_dir}/bidding_variance_{rounds_per_iter}_rounds_{num_iter}_iters_{num_runs}_runs_{obs_embedding_size}_emb_of_{embedding_size}.csv', index=False)
+        uncertainty_df.to_scv(f'{output_dir}/uncertainty_{rounds_per_iter}_rounds_{num_iter}_iters_{num_runs}_runs_{obs_embedding_size}_emb_of_{embedding_size}.csv', index=False)
+    except Exception as e:
+        print('cannot plot', e)
+    
     shading_factor_df = plot_measure_per_agent(run2agent2gamma, 'Shading Factors')
 
     def measure2df(run2measure, measure_name):
@@ -315,6 +381,9 @@ if __name__ == '__main__':
             df = measure2df(run2measure, measure_name)
         else:
             df = run2measure
+        if 'Agent' in df.columns:
+            df = df[~df['Agent'].str.startswith('Competitor')]
+
         fig, axes = plt.subplots(figsize=FIGSIZE)
         plt.title(f'{measure_name} Over Time', fontsize=FONTSIZE + 2)
         sns.lineplot(data=df, x="Iteration", y=measure_name, ax=axes)

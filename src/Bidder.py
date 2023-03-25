@@ -22,6 +22,9 @@ class Bidder:
     def clear_logs(self, memory):
         pass
 
+    def get_uncertainty(self):
+        return np.array([0])
+
 
 class TruthfulBidder(Bidder):
     """ A bidder that bids truthfully """
@@ -30,7 +33,7 @@ class TruthfulBidder(Bidder):
         self.truthful = True
 
     def bid(self, value, context, estimated_CTR):
-        return value * estimated_CTR
+        return value * estimated_CTR, 0.0
 
 
 class EmpiricalShadedBidder(Bidder):
@@ -664,6 +667,7 @@ class ValueSamplingBidder(Bidder):
         elif method=='Bayes by Backprop':
             self.winrate_model = BBBWinRateEstimator(context_dim)
             self.prior_var = prior_var
+            
         elif method=='MC Dropout':
             self.winrate_model = MCDropoutWinRateEstimator(context_dim)
         elif method=='NoisyNet':
@@ -706,7 +710,7 @@ class ValueSamplingBidder(Bidder):
 
         bid *= gamma
         self.gammas.append(gamma)
-        return bid
+        return bid, 0.0
 
     def update(self, contexts, values, bids, prices, outcomes, estimated_CTRs, won_mask, iteration, plot, figsize, fontsize, name):
         # FALLBACK: if you lost every auction you participated in, your model collapsed
@@ -745,7 +749,7 @@ class ValueSamplingBidder(Bidder):
         losses = []
         best_epoch, best_loss = -1, np.inf
         N = 8192
-        B = 128
+        B = 8192
         batch_num = int(N/B)
 
         for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
@@ -798,10 +802,16 @@ class ValueSamplingBidder(Bidder):
             self.gammas = []
         else:
             self.gammas = self.gammas[-memory:]
+    
+    def get_uncertainty(self):
+        if self.method in ['NoisyNet', 'Bayes by Backprop']:
+            return self.winrate_model.get_uncertainty()
+        else:
+            return np.array([0])
 
 class StochasticPolicyBidder(Bidder):
     # work in progress. this will not work.
-    def __init__(self, rng, gamma_mu, gamma_sigma, context_dim, loss_type, exploration_method, use_WIS=True):
+    def __init__(self, rng, gamma_mu, gamma_sigma, context_dim, loss_type, exploration_method, use_WIS=True, entropy_factor=0.1):
         super().__init__(rng)
         self.gamma_mu = gamma_mu
         self.gamma_sigma = gamma_sigma
@@ -814,26 +824,26 @@ class StochasticPolicyBidder(Bidder):
 
         assert loss_type in ['REINFORCE', 'Actor-Critic', 'PPO-MC', 'PPO-AC', 'DR']
         self.loss_type = loss_type
+
         if loss_type in ['Actor-Critic', 'PPO-AC', 'DR']:
             self.winrate_model = NeuralWinRateEstimator(context_dim)
             self.winrate_model.to(self.device)
         else:
             self.winrate_model = None
-        # Vanilla IS or weighted IS?
-        if self.loss_type=='REINFORCE':
-            self.use_WIS = use_WIS
+
 
         assert exploration_method in ['Entropy Regularization', 'NoisyNet', 'SWAG', 'MC Dropout']
         self.exploration_method = exploration_method
+
         if self.exploration_method=='NoisyNet':
-            self.bidding_policy = BayesianStochasticPolicy(context_dim, loss_type)
+            self.bidding_policy = BayesianStochasticPolicy(context_dim, loss_type, use_WIS=use_WIS)
         elif self.exploration_method=='SWAG':
-            self.bidding_policy = StochasticPolicy(context_dim, loss_type)
+            self.bidding_policy = StochasticPolicy(context_dim, loss_type, use_WIS=use_WIS)
             self.swag_policy = SWAG(self.bidding_policy)
         elif self.exploration_method=='MC Dropout':
-            self.bidding_policy = StochasticPolicy(context_dim, loss_type, dropout=0.8)
+            self.bidding_policy = StochasticPolicy(context_dim, loss_type, dropout=0.8, use_WIS=use_WIS)
         else:
-            self.bidding_policy = StochasticPolicy(context_dim, loss_type)
+            self.bidding_policy = StochasticPolicy(context_dim, loss_type, use_WIS=use_WIS, entropy_factor=entropy_factor)
         self.bidding_policy.to(self.device)
         self.model_initialised = False
 
@@ -846,21 +856,22 @@ class StochasticPolicyBidder(Bidder):
             gamma = self.rng.normal(self.gamma_mu, self.gamma_sigma)
             normal_pdf = lambda g: np.exp(-((self.gamma_mu - g) / self.gamma_sigma)**2/2) / (self.gamma_sigma * np.sqrt(2 * np.pi))
             propensity = normal_pdf(gamma)
+            variance = np.array([self.gamma_sigma])
         else:
             # Option 2:
             # Sample from the contextual bandit
             x = torch.Tensor(np.concatenate([context, np.array(estimated_CTR).reshape(1), np.array(value).reshape(1)])).to(self.device)
             with torch.no_grad():
                 if self.exploration_method=='NoisyNet':
-                    gamma, propensity = self.bidding_policy(x, self.MAP_propensity)
+                    gamma, propensity, variance = self.bidding_policy(x, self.MAP_propensity)
                 elif self.exploration_method=='SWAG':
                     self.swag_policy.sample()
-                    gamma, propensity = self.swag_policy(x)
+                    gamma, propensity, variance = self.swag_policy(x)
                     if self.MAP_propensity:
                         self.swag_policy.sample(add_swag=False)
                         _, propensity = self.bidding_policy.normal_pdf(x, gamma)
                 else:
-                    gamma, propensity = self.bidding_policy(x)
+                    gamma, propensity, variance = self.bidding_policy(x)
                 gamma = torch.clip(gamma, 0.0, 1.0)
 
         if self.model_initialised:
@@ -868,7 +879,7 @@ class StochasticPolicyBidder(Bidder):
         bid *= gamma
         self.gammas.append(gamma)
         self.propensities.append(propensity)
-        return bid
+        return bid, variance.reshape(-1)
 
     def update(self, contexts, values, bids, prices, outcomes, estimated_CTRs, won_mask, iteration, plot, figsize, fontsize, name):
         # Compute net utility
@@ -1019,6 +1030,12 @@ class StochasticPolicyBidder(Bidder):
         else:
             self.gammas = self.gammas[-memory:]
             self.propensities = self.propensities[-memory:]
+    
+    def get_uncertainty(self):
+        if self.exploration_method=='NoisyNet':
+            return self.bidding_policy.get_uncertainty()
+        else:
+            return np.array([0])
 
 class DDPGBidder(Bidder):
 

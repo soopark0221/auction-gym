@@ -49,7 +49,12 @@ class BayesianLinear(nn.Module):
         d = self.weight_mu.nelement() + self.bias_mu.nelement()
         return 0.5*(-torch.log(weight_sigma).sum() -torch.log(bias_sigma).sum() + (torch.sum(weight_sigma)+torch.sum(bias_sigma)) / prior_var \
                 + (torch.sum(self.weight_mu**2) + torch.sum(self.bias_mu**2)) / prior_var - d + d*np.log(prior_var))
-
+    
+    def get_uncertainty(self):
+        with torch.no_grad():
+            weight_sigma = torch.log1p(torch.exp(self.weight_rho)).numpy(force=True)
+            bias_sigma = torch.log1p(torch.exp(self.bias_rho)).numpy(force=True)
+        return np.concatenate([weight_sigma.reshape(-1), bias_sigma.reshape(-1)])
 
 
 # This is an implementation of Algorithm 3 (Regularised Bayesian Logistic Regression with a Laplace Approximation)
@@ -128,9 +133,9 @@ class NeuralWinRateEstimator(nn.Module):
 class BBBWinRateEstimator(nn.Module):
     def __init__(self, context_dim):
         super(BBBWinRateEstimator, self).__init__()
-        self.linear1 = BayesianLinear(context_dim+4,8)
+        self.linear1 = BayesianLinear(context_dim+4,16)
         self.relu = nn.ReLU()
-        self.linear2 = BayesianLinear(8,1)
+        self.linear2 = BayesianLinear(16,1)
         self.metric = nn.BCEWithLogitsLoss()
         self.eval()
 
@@ -145,14 +150,19 @@ class BBBWinRateEstimator(nn.Module):
             loss += self.metric(logits.squeeze(), y.squeeze())/sample_num
         return loss
     
+    def get_uncertainty(self):
+        uncertainties = [self.linear1.get_uncertainty(),
+                         self.linear2.get_uncertainty()]
+        return np.concatenate(uncertainties)
+    
 class MCDropoutWinRateEstimator(nn.Module):
     def __init__(self, context_dim):
         super().__init__()
         self.ffn = nn.Sequential(*[
-            nn.Linear(context_dim+4,8),
+            nn.Linear(context_dim+4,16),
             nn.Dropout(0.8),
             nn.ReLU(),
-            nn.Linear(8,1)])
+            nn.Linear(16,1)])
         self.metric = nn.BCEWithLogitsLoss()
         self.train()
     
@@ -166,9 +176,9 @@ class MCDropoutWinRateEstimator(nn.Module):
 class NoisyNetWinRateEstimator(nn.Module):
     def __init__(self, context_dim):
         super().__init__()
-        self.linear1 = BayesianLinear(context_dim+4,8)
+        self.linear1 = BayesianLinear(context_dim+4,16)
         self.relu = nn.ReLU()
-        self.linear2 = BayesianLinear(8,1)
+        self.linear2 = BayesianLinear(16,1)
         self.metric = nn.BCEWithLogitsLoss()
         self.eval()
 
@@ -182,6 +192,11 @@ class NoisyNetWinRateEstimator(nn.Module):
             logits = self.linear2(self.relu(self.linear1(x)))
             loss += self.metric(logits.squeeze(), y.squeeze())/sample_num
         return loss
+    
+    def get_uncertainty(self):
+        uncertainties = [self.linear1.get_uncertainty(),
+                         self.linear2.get_uncertainty()]
+        return np.concatenate(uncertainties)
 
 
 class BidShadingPolicy(torch.nn.Module):
@@ -347,8 +362,9 @@ class BidShadingContextualBandit(torch.nn.Module):
             return -(DR_IPS + DR_DM).mean()
 
 class BayesianStochasticPolicy(nn.Module):
-    def __init__(self, context_dim, loss_type):
+    def __init__(self, context_dim, loss_type, use_WIS=True):
         super().__init__()
+        self.use_WIS = use_WIS
 
         self.base = BayesianLinear(context_dim+3, 16)
         self.mu_head = BayesianLinear(16, 1)
@@ -408,7 +424,7 @@ class BayesianStochasticPolicy(nn.Module):
         else:
             propensity = torch.exp(dist.log_prob(gamma))
         gamma = torch.clip(gamma, min=0.0, max=1.0)
-        return gamma, propensity
+        return gamma, propensity, sigma.numpy(force=True)
 
     def normal_pdf(self, x, gamma):
         x = torch.relu(self.base(x))
@@ -418,14 +434,14 @@ class BayesianStochasticPolicy(nn.Module):
         return dist, torch.exp(dist.log_prob(gamma))
 
     def loss(self, context, value, price, gamma, logging_pp, utility,
-             winrate_model=None, use_WIS=True, policy_clipping=0.5):
+             winrate_model=None, policy_clipping=0.5):
         context = torch.Tensor(context).to(self.device)
         gamma = torch.Tensor(gamma).to(self.device)
         dist, target_pp = self.normal_pdf(context, gamma)
 
         if self.loss_type == 'REINFORCE': # vanilla off-policy REINFORCE
             importance_weights = target_pp / logging_pp
-            if use_WIS:
+            if self.use_WIS:
                 importance_weights = importance_weights / torch.sum(importance_weights)
             loss =  (-importance_weights * utility).mean()
         
@@ -472,12 +488,19 @@ class BayesianStochasticPolicy(nn.Module):
             loss = -(ppo_object + v_estimate).mean()
         
         return loss
-
+    
+    def get_uncertainty(self):
+        uncertainties = [self.base.get_uncertainty(),
+                         self.mu_head.get_uncertainty(),
+                         self.sigma_head.get_uncertainty()]
+        return np.concatenate(uncertainties)
         
 class StochasticPolicy(nn.Module):
-    def __init__(self, context_dim, loss_type, dropout=None):
+    def __init__(self, context_dim, loss_type, dropout=None, use_WIS=True, entropy_factor=None):
         super().__init__()
         self.dropout = dropout
+        self.use_WIS = use_WIS
+        self.entropy_factor = entropy_factor
         
         self.base = nn.Linear(context_dim+3, 8)
         self.mu_head = nn.Linear(8, 1)
@@ -548,7 +571,7 @@ class StochasticPolicy(nn.Module):
         gamma = dist.rsample()
         gamma = torch.clip(gamma, min=0.0, max=1.0)
         propensity = torch.exp(dist.log_prob(gamma))
-        return gamma, propensity
+        return gamma, propensity, sigma.numpy(force=True)
 
     def normal_pdf(self, x, gamma):
         if self.dropout is not None:
@@ -559,14 +582,14 @@ class StochasticPolicy(nn.Module):
         return dist, torch.exp(dist.log_prob(gamma))
 
     def loss(self, context, value, price, gamma, logging_pp, utility,
-             winrate_model=None, use_WIS=True, policy_clipping=0.5, entropy_factor=0.0):
+             winrate_model=None, policy_clipping=0.5):
         context = torch.Tensor(context).to(self.device)
         gamma = torch.Tensor(gamma).to(self.device)
         dist, target_pp = self.normal_pdf(context, gamma)
 
         if self.loss_type == 'REINFORCE': # vanilla off-policy REINFORCE
             importance_weights = target_pp / logging_pp
-            if use_WIS:
+            if self.use_WIS:
                 importance_weights = importance_weights / torch.sum(importance_weights)
             loss =  (-importance_weights * utility).mean()
         
@@ -612,13 +635,13 @@ class StochasticPolicy(nn.Module):
 
             loss = -(ppo_object + v_estimate).mean()
         
-        loss -= entropy_factor * self.entropy(context)
+        loss -= self.entropy_factor * self.entropy(context)
         
         return loss
 
     def entropy(self, context):
-        context = F.relu(self.base(context))
-        sigma = F.sigmoid(self.sigma_head(context)) + self.min_sigma
+        context = torch.relu(self.base(context))
+        sigma = torch.sigmoid(self.sigma_head(context)) + self.min_sigma
         return (1. + torch.log(2 * np.pi * sigma.squeeze())).mean()/2
           
 

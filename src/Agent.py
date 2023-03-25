@@ -26,6 +26,8 @@ class Agent:
 
         self.memory = memory
 
+        self.bidding_variance = []
+
     def select_item(self, context):
         # Estimate CTR for all items
         estim_CTRs = self.allocator.estimate_CTR(context)
@@ -49,7 +51,7 @@ class Agent:
         value = self.item_values[best_item]
 
         # Get the bid
-        bid = self.bidder.bid(value, context, estimated_CTR)
+        bid, variance = self.bidder.bid(value, context, estimated_CTR)
 
         # Log what we know so far
         self.logs.append(ImpressionOpportunity(context=context,
@@ -64,6 +66,8 @@ class Agent:
                                                second_price=0.0,
                                                outcome=0,
                                                won=False))
+        
+        self.bidding_variance.append(variance)
 
         return bid, best_item
 
@@ -116,6 +120,14 @@ class Agent:
 
     def get_CTR_bias(self):
         return np.mean(list((opp.estimated_CTR / opp.true_CTR) for opp in filter(lambda opp: opp.won, self.logs)))
+    
+    def get_uncertainty(self):
+        return self.bidder.get_uncertainty()
+    
+    def get_bidding_var(self):
+        var = np.array(self.bidding_variance)
+        self.bidding_variance = []
+        return np.sqrt(np.sum(var**2))
 
     def clear_utility(self):
         self.net_utility = .0
