@@ -3,7 +3,7 @@
     "num_runs": 3,
     "num_iter" : 15,
     "rounds_per_iter": 8192,
-    "num_participants_per_round": 2,
+    "num_participants_per_round": 3,
     "embedding_size": 10,
     "embedding_var": 1.0,
     "obs_embedding_size": 8,

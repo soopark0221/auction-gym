@@ -685,7 +685,7 @@ class ValueSamplingBidder(Bidder):
         else:
             # Grid search over gamma
             n_values_search = 128
-            gamma_grid = np.linspace(0.1, 1 ,n_values_search)
+            gamma_grid = np.linspace(0.1, 1.5 ,n_values_search)
             x = torch.Tensor(np.hstack((np.tile(context, ((n_values_search, 1))), np.tile(estimated_CTR, (n_values_search, 1)),
                                         np.tile(value, (n_values_search, 1)), gamma_grid.reshape(-1,1)))).to(self.device)
 
@@ -704,9 +704,9 @@ class ValueSamplingBidder(Bidder):
             gamma = gamma_grid[np.argmax(estimated_utility)]
         
         if self.method=='Epsilon-greedy' and self.rng.random()<self.eps:
-            gamma = self.rng.uniform(0.1,1)
+            gamma = self.rng.uniform(0.1,1.5)
         elif self.method=='Gaussian Noise':
-            gamma = np.clip(gamma+self.rng.normal(0,self.noise), 0.1, 1)
+            gamma = np.clip(gamma+self.rng.normal(0,self.noise), 0.1, 1.5)
 
         bid *= gamma
         self.gammas.append(gamma)
@@ -872,7 +872,7 @@ class StochasticPolicyBidder(Bidder):
                         _, propensity = self.bidding_policy.normal_pdf(x, gamma)
                 else:
                     gamma, propensity, variance = self.bidding_policy(x)
-                gamma = torch.clip(gamma, 0.0, 1.0)
+                gamma = torch.clip(gamma, 0.0, 1.5)
 
         if self.model_initialised:
             gamma = gamma.detach().item()
@@ -1087,12 +1087,12 @@ class DDPGBidder(Bidder):
         if self.model_initialised:
             gamma = gamma.detach().item()
         if self.exploration_method=='Gaussian noise':
-            gamma = np.clip(gamma, 0.0, 1.0)
+            gamma = np.clip(gamma+self.rng.normal(0,self.noise), 0.1, 1.5)
         bid *= gamma
         self.gammas.append(gamma)
         # don't care
         self.propensities.append(1.0)
-        return bid
+        return bid, 0.0
 
     def update(self, contexts, values, bids, prices, outcomes, estimated_CTRs, won_mask, iteration, plot, figsize, fontsize, name):
         # Compute net utility
@@ -1223,3 +1223,9 @@ class DDPGBidder(Bidder):
             self.gammas = []
         else:
             self.gammas = self.gammas[-memory:]
+    
+    def get_uncertainty(self):
+        if self.exploration_method in ['NoisyNet', 'Bayes by Backprop']:
+            return self.bidding_policy.get_uncertainty()
+        else:
+            return np.array([0])

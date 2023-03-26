@@ -395,8 +395,8 @@ class BayesianStochasticPolicy(nn.Module):
                 context_mini = contexts[i:i+B]
                 gamma_mini = gammas[i:i+B]
                 optimizer.zero_grad()
-                gamma_mu = torch.sigmoid(self.mu_head(torch.relu(self.base(context_mini))))
-                gamma_sigma = torch.sigmoid(self.sigma_head(torch.relu(self.base(context_mini))))
+                gamma_mu = F.softplus(self.mu_head(torch.relu(self.base(context_mini))))
+                gamma_sigma = F.softplus(self.sigma_head(torch.relu(self.base(context_mini))))
                 loss = metric(gamma_mu.squeeze(), gamma_mini)+ metric(gamma_sigma.squeeze(), torch.ones_like(gamma_mini).to(self.device) * 0.1)
                 loss.backward()
                 optimizer.step()
@@ -411,14 +411,14 @@ class BayesianStochasticPolicy(nn.Module):
 
     def forward(self, x, MAP_propensity=True):
         hidden = torch.relu(self.base(x))
-        mu = torch.sigmoid(self.mu_head(hidden)).squeeze()
-        sigma = torch.sigmoid(self.sigma_head(hidden)).squeeze() + self.min_sigma
+        mu = F.softplus(self.mu_head(hidden)).squeeze()
+        sigma = F.softplus(self.sigma_head(hidden)).squeeze() + self.min_sigma
         dist = torch.distributions.normal.Normal(mu, sigma)
         gamma = dist.rsample()
         if MAP_propensity:
             x_MAP = torch.relu(self.base(x, False))
-            mu_MAP = torch.sigmoid(self.mu_head(x_MAP, False)).squeeze()
-            sigma_MAP = torch.sigmoid(self.sigma_head(x_MAP, False)).squeeze() + self.min_sigma
+            mu_MAP = F.softplus(self.mu_head(x_MAP, False)).squeeze()
+            sigma_MAP = F.softplus(self.sigma_head(x_MAP, False)).squeeze() + self.min_sigma
             dist_MAP = torch.distributions.normal.Normal(mu_MAP, sigma_MAP)
             propensity = torch.exp(dist_MAP.log_prob(gamma))
         else:
@@ -428,8 +428,8 @@ class BayesianStochasticPolicy(nn.Module):
 
     def normal_pdf(self, x, gamma):
         x = torch.relu(self.base(x))
-        mu = torch.sigmoid(self.mu_head(x)).squeeze()
-        sigma = torch.sigmoid(self.sigma_head(x)).squeeze() + self.min_sigma
+        mu = F.softplus(self.mu_head(x)).squeeze()
+        sigma = F.softplus(self.sigma_head(x)).squeeze() + self.min_sigma
         dist = torch.distributions.Normal(mu, sigma)
         return dist, torch.exp(dist.log_prob(gamma))
 
@@ -518,16 +518,16 @@ class StochasticPolicy(nn.Module):
     def mu(self, x):
         x = torch.relu(self.base(x))
         if self.dropout is None:
-            return torch.sigmoid(self.mu_head(x))
+            return F.softplus(self.mu_head(x))
         else:
-            return torch.sigmoid(self.mu_head(self.dropout_mu(x)))
+            return F.softplus(self.mu_head(self.dropout_mu(x)))
     
     def sigma(self, x):
         x = torch.relu(self.base(x))
         if self.dropout is None:
-            return torch.sigmoid(self.sigma_head(x))
+            return F.softplus(self.sigma_head(x))
         else:
-            return torch.sigmoid(self.sigma_head(self.dropout_mu(x)))
+            return F.softplus(self.sigma_head(self.dropout_mu(x)))
 
     def initialise_policy(self, contexts, gammas):
         # The first time, train the policy to imitate the logging policy
@@ -653,7 +653,7 @@ class DeterministicPolicy(nn.Module):
             nn.Linear(context_dim+3, 8),
             nn.ReLU(),
             nn.Linear(8, 1),
-            nn.Sigmoid()
+            nn.Softplus()
             ])
         self.eval()
 
@@ -702,8 +702,8 @@ class BayesianDeterministicPolicy(nn.Module):
     def __init__(self, context_dim, prior_var=None):
         super().__init__()
 
-        self.linear1 = BayesianLinear(context_dim+3, 8)
-        self.linear2 = BayesianLinear(8, 1)
+        self.linear1 = BayesianLinear(context_dim+3, 16)
+        self.linear2 = BayesianLinear(16, 1)
         self.eval()
 
         self.prior_var = prior_var # if this is None, the bidder's exploring via NoisyNet
@@ -729,7 +729,7 @@ class BayesianDeterministicPolicy(nn.Module):
                 gamma_mini = gamma[i:i+B]
                 optimizer.zero_grad()
                 gamma_pred = torch.relu(self.linear1(context_mini))
-                gamma_pred = torch.sigmoid(self.linear2(gamma_pred))
+                gamma_pred = F.softplus(self.linear2(gamma_pred))
                 loss = metric(gamma_pred.squeeze(), gamma_mini)
                 loss.backward()
                 optimizer.step()
@@ -750,7 +750,7 @@ class BayesianDeterministicPolicy(nn.Module):
 
     def forward(self, x, sampling=True):
         x = torch.relu(self.linear1(x, sampling))
-        return torch.sigmoid(self.linear2(x, sampling))
+        return F.softplus(self.linear2(x, sampling))
     
     def loss(self, winrate_model, context, value, price, N=None):
         gamma_pred = self(context, True).reshape(-1,1)
@@ -761,3 +761,8 @@ class BayesianDeterministicPolicy(nn.Module):
         else:
             kl_penalty = (self.linear1.KL_div(self.prior_var) + self.linear2.KL_div(self.prior_var))/N
             return torch.mean(utility) + kl_penalty
+    
+    def get_uncertainty(self):
+        uncertainties = [self.linear1.get_uncertainty(),
+                         self.linear2.get_uncertainty()]
+        return np.concatenate(uncertainties)

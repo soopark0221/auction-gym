@@ -127,7 +127,7 @@ class Agent:
     def get_bidding_var(self):
         var = np.array(self.bidding_variance)
         self.bidding_variance = []
-        return np.sqrt(np.sum(var**2))
+        return np.sqrt(np.sum(var**2)/var.shape[0])
 
     def clear_utility(self):
         self.net_utility = .0

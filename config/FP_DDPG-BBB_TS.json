@@ -3,14 +3,27 @@
     "num_runs": 3,
     "num_iter" : 15,
     "rounds_per_iter": 8192,
-    "num_participants_per_round": 2,
+    "num_participants_per_round": 3,
     "embedding_size": 10,
     "embedding_var": 1.0,
     "obs_embedding_size": 8,
     "allocation": "FirstPrice",
     "agents": [ {
+      "name": "Competitor-Truthful",
+      "num_copies": 4,
+      "num_items": 12,
+        "allocator": {
+          "type": "PyTorchLogisticRegressionAllocator",
+          "kwargs": {"embedding_size": 8, "num_items": 12}
+        },
+        "bidder": {
+            "type": "TruthfulBidder",
+            "kwargs": {}
+      }
+    },
+    {
       "name": "DDPG-BBB",
-      "num_copies": 3,
+      "num_copies": 1,
       "num_items": 12,
         "allocator": {
           "type": "PyTorchLogisticRegressionAllocator",
@@ -22,9 +35,11 @@
               "gamma_mu": 1.0,
               "gamma_sigma": 0.02,
               "context_dim": 8,
-              "exploration_method": "\"Bayes by Backprop\""
+              "exploration_method": "\"Bayes by Backprop\"",
+              "prior_var": 1.0
             }
       }
     }],
-    "output_dir": "results/FP_DDPG_TS_PO/"
+    "output_dir": "results/FP_DDPG-BBB_TS_PO/",
+    "network_architecture": "input-16-output"
   }

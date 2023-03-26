@@ -257,7 +257,7 @@ if __name__ == '__main__':
         return pd.DataFrame(df_rows)
     
     def vector_of_measure_per_agent2df(run2agent2vector_measure, measure_name):
-        df_rows = {'Run': [], 'Agent': [], 'Iteration': [], measure_name: []}
+        df_rows = {'Run': [], 'Agent': [], 'Iteration': [], 'Parameter':[], measure_name: []}
         for run, agent2measure in run2agent2vector_measure.items():
             for agent, vectors in agent2measure.items():
                 for iteration, vector in enumerate(vectors):
@@ -276,34 +276,36 @@ if __name__ == '__main__':
         else:
             df = run2agent2measure
 
-        fig, axes = plt.subplots(figsize=FIGSIZE)
-        plt.title(f'{measure_name} Over Time', fontsize=FONTSIZE + 2)
-        min_measure, max_measure = 0.0, 0.0
-        sns.lineplot(data=df, x="Iteration", y=measure_name, hue="Agent", ax=axes)
-        plt.xticks(fontsize=FONTSIZE - 2)
-        plt.ylabel(f'{measure_name}', fontsize=FONTSIZE)
-        if optimal is not None:
-            plt.axhline(optimal, ls='--', color='gray', label='Optimal')
-            min_measure = min(min_measure, optimal)
-        if log_y:
-            plt.yscale('log')
-        if yrange is None:
-            factor = 1.1 if min_measure < 0 else 0.9
-            # plt.ylim(min_measure * factor, max_measure * 1.1)
-        else:
-            plt.ylim(yrange[0], yrange[1])
-        plt.yticks(fontsize=FONTSIZE - 2)
-        plt.grid(True, 'major', 'y', ls='--', lw=.5, c='k', alpha=.3)
-        plt.legend(loc='upper left', bbox_to_anchor=(-.05, -.15), fontsize=FONTSIZE, ncol=3)
-        plt.tight_layout()
-        plt.savefig(f"{output_dir}/{measure_name.replace(' ', '_')}_{rounds_per_iter}_rounds_{num_iter}_iters_{num_runs}_runs_{obs_embedding_size}_emb_of_{embedding_size}.png", bbox_inches='tight')
-        # plt.show()
+        try:
+            fig, axes = plt.subplots(figsize=FIGSIZE)
+            plt.title(f'{measure_name} Over Time', fontsize=FONTSIZE + 2)
+            min_measure, max_measure = 0.0, 0.0
+            sns.lineplot(data=df, x="Iteration", y=measure_name, hue="Agent", ax=axes)
+            plt.xticks(fontsize=FONTSIZE - 2)
+            plt.ylabel(f'{measure_name}', fontsize=FONTSIZE)
+            if optimal is not None:
+                plt.axhline(optimal, ls='--', color='gray', label='Optimal')
+                min_measure = min(min_measure, optimal)
+            if log_y:
+                plt.yscale('log')
+            if yrange is None:
+                factor = 1.1 if min_measure < 0 else 0.9
+                # plt.ylim(min_measure * factor, max_measure * 1.1)
+            else:
+                plt.ylim(yrange[0], yrange[1])
+            plt.yticks(fontsize=FONTSIZE - 2)
+            plt.grid(True, 'major', 'y', ls='--', lw=.5, c='k', alpha=.3)
+            plt.legend(loc='upper left', bbox_to_anchor=(-.05, -.15), fontsize=FONTSIZE, ncol=3)
+            plt.tight_layout()
+            plt.savefig(f"{output_dir}/{measure_name.replace(' ', '_')}_{rounds_per_iter}_rounds_{num_iter}_iters_{num_runs}_runs_{obs_embedding_size}_emb_of_{embedding_size}.png", bbox_inches='tight')
+        except Exception as e:
+            print('cannot plot', e)
         return df
     
     def plot_vector_measure_per_agent(run2agent2vector_measure, measure_name, cumulative=False, log_y=False, yrange=None, optimal=None):
         # Generate DataFrame for Seaborn
         if type(run2agent2vector_measure) != pd.DataFrame:
-            df = measure_per_agent2df(run2agent2vector_measure, measure_name)
+            df = vector_of_measure_per_agent2df(run2agent2vector_measure, measure_name)
         else:
             df = run2agent2vector_measure
 
@@ -312,7 +314,7 @@ if __name__ == '__main__':
         fig, axes = plt.subplots(figsize=FIGSIZE)
         plt.title(f'{measure_name} Distribution', fontsize=FONTSIZE + 2)
         min_measure, max_measure = 0.0, 0.0
-        sns.boxplot(data=df, y="Iteration", x=measure_name, hue="Agent", ax=axes)
+        sns.boxplot(data=df, x="Iteration", y=measure_name, hue="Agent", ax=axes)
         plt.xticks(fontsize=FONTSIZE - 2)
         plt.ylabel('Iteration', fontsize=FONTSIZE)
         if optimal is not None:
@@ -356,13 +358,10 @@ if __name__ == '__main__':
     plot_measure_per_agent(run2agent2CTR_RMSE, 'CTR RMSE', log_y=True)
     plot_measure_per_agent(run2agent2CTR_bias, 'CTR Bias', optimal=1.0) #, yrange=(.5, 5.0))
 
-    try:
-        bidding_var_df = plot_measure_per_agent(run2agent2bidding_var, 'Variance of Policy')
-        uncertainty_df = plot_vector_measure_per_agent(run2agent2uncertainty, 'Uncertainty in Parameters')
-        bidding_var_df.to_scv(f'{output_dir}/bidding_variance_{rounds_per_iter}_rounds_{num_iter}_iters_{num_runs}_runs_{obs_embedding_size}_emb_of_{embedding_size}.csv', index=False)
-        uncertainty_df.to_scv(f'{output_dir}/uncertainty_{rounds_per_iter}_rounds_{num_iter}_iters_{num_runs}_runs_{obs_embedding_size}_emb_of_{embedding_size}.csv', index=False)
-    except Exception as e:
-        print('cannot plot', e)
+    bidding_var_df = plot_measure_per_agent(run2agent2bidding_var, 'Variance of Policy')
+    uncertainty_df = plot_vector_measure_per_agent(run2agent2uncertainty, 'Uncertainty in Parameters')
+    bidding_var_df.to_csv(f'{output_dir}/bidding_variance_{rounds_per_iter}_rounds_{num_iter}_iters_{num_runs}_runs_{obs_embedding_size}_emb_of_{embedding_size}.csv', index=False)
+    uncertainty_df.to_csv(f'{output_dir}/uncertainty_{rounds_per_iter}_rounds_{num_iter}_iters_{num_runs}_runs_{obs_embedding_size}_emb_of_{embedding_size}.csv', index=False)
     
     shading_factor_df = plot_measure_per_agent(run2agent2gamma, 'Shading Factors')
 

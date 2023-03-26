@@ -22,7 +22,7 @@
       }
     },
     {
-      "name": "PPOAC-NoisyNet",
+      "name": "DDPG-Gaussian",
       "num_copies": 1,
       "num_items": 12,
         "allocator": {
@@ -30,16 +30,16 @@
           "kwargs": {"embedding_size": 8, "num_items": 12}
         },
         "bidder": {
-            "type": "StochasticPolicyBidder",
+            "type": "DDPGBidder",
             "kwargs": {
               "gamma_mu": 1.0,
               "gamma_sigma": 0.02,
               "context_dim": 8,
-              "loss_type": "\"PPO-AC\"",
-              "exploration_method": "\"NoisyNet\""
+              "exploration_method": "\"Gaussian Noise\"",
+              "noise": 0.02
             }
       }
     }],
-    "output_dir": "results/FP_PPOAC-NoisyNet_PO/",
+    "output_dir": "results/FP_DDPG-Gaussian_TS_PO/",
     "network_architecture": "input-16-output"
   }
