@@ -28,9 +28,9 @@ class BayesianLinear(nn.Module):
     def reset_parameters(self):
         nn.init.kaiming_uniform_(self.weight_mu)
         nn.init.kaiming_uniform_(self.weight_rho)
-        nn.init.uniform_(self.bias_mu)
-        nn.init.uniform_(self.bias_rho)
-
+        nn.init.uniform_(self.bias_mu, -0.02, 0.02)
+        nn.init.uniform_(self.bias_rho, -0.02, 0.02)
+        
     def forward(self, input, sample=True):
         if self.training or sample:
             weight_sigma = torch.log1p(torch.exp(self.weight_rho))
@@ -382,11 +382,12 @@ class BayesianStochasticPolicy(nn.Module):
         epochs = 10000
         lr = 1e-3
         optimizer = torch.optim.Adam(self.parameters(), lr=lr, weight_decay=1e-4, amsgrad=True)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=256, min_lr=1e-7, factor=0.2, verbose=True)
         metric = nn.MSELoss()
         losses = []
         best_epoch, best_loss = -1, np.inf
-        N = 8192
-        B = 8192
+        N = contexts.size()[0]
+        B = N
         batch_num = int(N/B)
 
         for epoch in tqdm(range(int(epochs)), desc=f'Initialising Policy'):
@@ -397,17 +398,32 @@ class BayesianStochasticPolicy(nn.Module):
                 optimizer.zero_grad()
                 gamma_mu = F.softplus(self.mu_head(torch.relu(self.base(context_mini))))
                 gamma_sigma = F.softplus(self.sigma_head(torch.relu(self.base(context_mini))))
-                loss = metric(gamma_mu.squeeze(), gamma_mini)+ metric(gamma_sigma.squeeze(), torch.ones_like(gamma_mini).to(self.device) * 0.1)
+                loss = metric(gamma_mu.squeeze(), gamma_mini) + 0.1 * metric(gamma_sigma.squeeze(), torch.ones_like(gamma_mini).to(self.device) * 0.5)
                 loss.backward()
                 optimizer.step()
+                scheduler.step(loss)
                 epoch_loss += loss.item()
             losses.append(epoch_loss)
             if (best_loss - losses[-1]) > 1e-6:
                 best_epoch = epoch
                 best_loss = losses[-1]
-            elif epoch - best_epoch > 500:
+            elif epoch - best_epoch > 2000:
                 print(f'Stopping at Epoch {epoch}')
                 break
+        
+        # fig, ax = plt.subplots()
+        # plt.title(f'Initialising policy')
+        # plt.plot(losses, label=r'Loss')
+        # plt.ylabel('MSE with logging policy')
+        # plt.legend()
+        # fig.set_tight_layout(True)
+        # plt.show()
+
+        pred_gamma_mu = F.softplus(self.mu_head(torch.relu(self.base(context_mini)))).numpy(force=True)
+        pred_gamma_sigma = F.softplus(self.sigma_head(torch.relu(self.base(context_mini)))).numpy(force=True)
+        print('Predicted mu Gammas: ', pred_gamma_mu.min(), pred_gamma_mu.max(), pred_gamma_mu.mean())
+        print('Predicted sigma Gammas: ', pred_gamma_sigma.min(), pred_gamma_sigma.max(), pred_gamma_sigma.mean())
+
 
     def forward(self, x, MAP_propensity=True):
         hidden = torch.relu(self.base(x))
@@ -423,8 +439,8 @@ class BayesianStochasticPolicy(nn.Module):
             propensity = torch.exp(dist_MAP.log_prob(gamma))
         else:
             propensity = torch.exp(dist.log_prob(gamma))
-        gamma = torch.clip(gamma, min=0.0, max=1.0)
-        return gamma, propensity, sigma.numpy(force=True)
+        gamma = torch.clip(gamma, min=0.0, max=1.5)
+        return gamma, propensity.numpy(force=True).item(), sigma.numpy(force=True)
 
     def normal_pdf(self, x, gamma):
         x = torch.relu(self.base(x))
@@ -435,12 +451,10 @@ class BayesianStochasticPolicy(nn.Module):
 
     def loss(self, context, value, price, gamma, logging_pp, utility,
              winrate_model=None, policy_clipping=0.5):
-        context = torch.Tensor(context).to(self.device)
-        gamma = torch.Tensor(gamma).to(self.device)
         dist, target_pp = self.normal_pdf(context, gamma)
 
         if self.loss_type == 'REINFORCE': # vanilla off-policy REINFORCE
-            importance_weights = target_pp / logging_pp
+            importance_weights = torch.clip(target_pp / logging_pp, 0.01)
             if self.use_WIS:
                 importance_weights = importance_weights / torch.sum(importance_weights)
             loss =  (-importance_weights * utility).mean()
@@ -538,8 +552,8 @@ class StochasticPolicy(nn.Module):
         metric = nn.MSELoss()
         losses = []
         best_epoch, best_loss = -1, np.inf
-        N = 8192
-        B = 8192
+        N = contexts.size()[0]
+        B = N
         batch_num = int(N/B)
 
         for epoch in tqdm(range(int(epochs)), desc=f'Initialising Policy'):
@@ -562,6 +576,19 @@ class StochasticPolicy(nn.Module):
                 print(f'Stopping at Epoch {epoch}')
                 break
 
+        # fig, ax = plt.subplots()
+        # plt.title(f'Initialising policy')
+        # plt.plot(losses, label=r'Loss')
+        # plt.ylabel('MSE with logging policy')
+        # plt.legend()
+        # fig.set_tight_layout(True)
+        # plt.show()
+
+        pred_gamma_mu = F.softplus(self.mu_head(torch.relu(self.base(context_mini)))).numpy(force=True)
+        pred_gamma_sigma = F.softplus(self.sigma_head(torch.relu(self.base(context_mini)))).numpy(force=True)
+        print('Predicted mu Gammas: ', pred_gamma_mu.min(), pred_gamma_mu.max(), pred_gamma_mu.mean())
+        print('Predicted sigma Gammas: ', pred_gamma_sigma.min(), pred_gamma_sigma.max(), pred_gamma_sigma.mean())
+
     def forward(self, x):
         if self.dropout is not None:
             self.train()
@@ -569,9 +596,9 @@ class StochasticPolicy(nn.Module):
         sigma = self.sigma(x)
         dist = torch.distributions.Normal(mu, sigma)
         gamma = dist.rsample()
-        gamma = torch.clip(gamma, min=0.0, max=1.0)
+        gamma = torch.clip(gamma, min=0.0, max=1.5)
         propensity = torch.exp(dist.log_prob(gamma))
-        return gamma, propensity, sigma.numpy(force=True)
+        return gamma, propensity.numpy(force=True), sigma.numpy(force=True)
 
     def normal_pdf(self, x, gamma):
         if self.dropout is not None:
@@ -583,12 +610,10 @@ class StochasticPolicy(nn.Module):
 
     def loss(self, context, value, price, gamma, logging_pp, utility,
              winrate_model=None, policy_clipping=0.5):
-        context = torch.Tensor(context).to(self.device)
-        gamma = torch.Tensor(gamma).to(self.device)
         dist, target_pp = self.normal_pdf(context, gamma)
 
         if self.loss_type == 'REINFORCE': # vanilla off-policy REINFORCE
-            importance_weights = target_pp / logging_pp
+            importance_weights = torch.clip(target_pp / logging_pp, 0.01)
             if self.use_WIS:
                 importance_weights = importance_weights / torch.sum(importance_weights)
             loss =  (-importance_weights * utility).mean()
@@ -641,7 +666,7 @@ class StochasticPolicy(nn.Module):
 
     def entropy(self, context):
         context = torch.relu(self.base(context))
-        sigma = torch.sigmoid(self.sigma_head(context)) + self.min_sigma
+        sigma = F.softplus(self.sigma_head(context)) + self.min_sigma
         return (1. + torch.log(2 * np.pi * sigma.squeeze())).mean()/2
           
 
@@ -666,8 +691,8 @@ class DeterministicPolicy(nn.Module):
         metric = torch.nn.MSELoss()
         losses = []
         best_epoch, best_loss = -1, np.inf
-        N = 8192
-        B = 8192
+        N = context.size()[0]
+        B = N
         batch_num = int(N/B)
 
         for epoch in tqdm(range(int(epochs)), desc=f'Initialising Policy'):
@@ -690,7 +715,7 @@ class DeterministicPolicy(nn.Module):
                 break
 
     def forward(self, x):
-        return self.ffn(x)
+        return torch.clip(self.ffn(x), 0.1, 1.5)
     
     def loss(self, winrate_model, context, value, price):
         gamma_pred = self(context).reshape(-1,1)
@@ -718,8 +743,8 @@ class BayesianDeterministicPolicy(nn.Module):
         metric = torch.nn.MSELoss()
         losses = []
         best_epoch, best_loss = -1, np.inf
-        N = 8192
-        B = 8192
+        N = context.size()[0]
+        B = N
         batch_num = int(N/B)
 
         for epoch in tqdm(range(int(epochs)), desc=f'Initialising Policy'):
@@ -750,7 +775,7 @@ class BayesianDeterministicPolicy(nn.Module):
 
     def forward(self, x, sampling=True):
         x = torch.relu(self.linear1(x, sampling))
-        return F.softplus(self.linear2(x, sampling))
+        return torch.clip(F.softplus(self.linear2(x, sampling)), 0.1, 1.5)
     
     def loss(self, winrate_model, context, value, price, N=None):
         gamma_pred = self(context, True).reshape(-1,1)

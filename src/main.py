@@ -147,7 +147,7 @@ def simulation_run():
             if isinstance(agent.bidder, PolicyLearningBidder) or isinstance(agent.bidder, DoublyRobustBidder):
                 agent2gamma[agent.name].append(torch.mean(torch.Tensor(agent.bidder.gammas)).detach().item())
             elif not agent.bidder.truthful:
-                agent2gamma[agent.name].append(np.mean(agent.bidder.gammas))
+                agent2gamma[agent.name].append(np.array(agent.bidder.gammas))
 
             best_expected_value = np.mean([opp.best_expected_value for opp in agent.logs])
             agent2best_expected_value[agent.name].append(best_expected_value)
@@ -363,7 +363,7 @@ if __name__ == '__main__':
     bidding_var_df.to_csv(f'{output_dir}/bidding_variance_{rounds_per_iter}_rounds_{num_iter}_iters_{num_runs}_runs_{obs_embedding_size}_emb_of_{embedding_size}.csv', index=False)
     uncertainty_df.to_csv(f'{output_dir}/uncertainty_{rounds_per_iter}_rounds_{num_iter}_iters_{num_runs}_runs_{obs_embedding_size}_emb_of_{embedding_size}.csv', index=False)
     
-    shading_factor_df = plot_measure_per_agent(run2agent2gamma, 'Shading Factors')
+    shading_factor_df = plot_vector_measure_per_agent(run2agent2gamma, 'Shading Factors')
 
     def measure2df(run2measure, measure_name):
         df_rows = {'Run': [], 'Iteration': [], measure_name: []}

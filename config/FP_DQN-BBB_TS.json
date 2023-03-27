@@ -33,9 +33,10 @@
             "type": "ValueSamplingBidder",
             "kwargs": {
               "gamma_mu": 1.0,
-              "gamma_sigma": 0.02,
+              "gamma_sigma": 0.5,
               "context_dim": 8,
-              "method": "\"Bayes by Backprop\""
+              "method": "\"Bayes by Backprop\"",
+              "prior_var": 1.0
             }
       }
     }],

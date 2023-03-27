@@ -728,6 +728,7 @@ class ValueSamplingBidder(Bidder):
         # Augment data with samples: if you shade 100%, you will lose
         # If you won now, you would have also won if you bid higher
         X = np.hstack((contexts.reshape(-1,self.context_dim), estimated_CTRs.reshape(-1,1), values.reshape(-1,1), np.array(self.gammas).reshape(-1, 1)))
+        N = X.shape[0]
 
         X_aug_neg = X.copy()
         X_aug_neg[:, -1] = 0.0
@@ -735,10 +736,10 @@ class ValueSamplingBidder(Bidder):
         X_aug_pos = X[won_mask].copy()
         X_aug_pos[:, -1] = np.maximum(X_aug_pos[:, -1], 1.0)
 
-        X = torch.Tensor(np.vstack((X, X_aug_neg)))
+        X = torch.Tensor(np.vstack((X, X_aug_neg))).to(self.device)
 
         y = won_mask.astype(np.float32).reshape(-1,1)
-        y = torch.Tensor(np.concatenate((y, np.zeros_like(y))))
+        y = torch.Tensor(np.concatenate((y, np.zeros_like(y)))).to(self.device)
 
         # Training config
         self.winrate_model.train()
@@ -748,16 +749,15 @@ class ValueSamplingBidder(Bidder):
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=100, min_lr=1e-7, factor=0.1, verbose=True)
         losses = []
         best_epoch, best_loss = -1, np.inf
-        N = 8192
-        B = 8192
+        B = N
         batch_num = int(N/B)
 
         for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
             epoch_loss = 0
 
             for i in range(batch_num):
-                X_mini = X[i:i+B].to(self.device)
-                y_mini = y[i:i+B].to(self.device)
+                X_mini = X[i:i+B]
+                y_mini = y[i:i+B]
                 optimizer.zero_grad()
 
                 if self.method=='Bayes by Backprop':
@@ -895,6 +895,7 @@ class StochasticPolicyBidder(Bidder):
             # Augment data with samples: if you shade 100%, you will lose
             # If you won now, you would have also won if you bid higher
             X = np.hstack((contexts.reshape(-1,self.context_dim), estimated_CTRs.reshape(-1,1), values.reshape(-1,1), gammas_numpy.reshape(-1, 1)))
+            N = X.shape[0]
 
             X_aug_neg = X.copy()
             X_aug_neg[:, -1] = 0.0
@@ -915,8 +916,7 @@ class StochasticPolicyBidder(Bidder):
             optimizer = torch.optim.Adam(self.winrate_model.parameters(), lr=lr, weight_decay=1e-6, amsgrad=True)
             scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=256, min_lr=1e-7, factor=0.2, verbose=True)
             losses = []
-            N = 8192
-            B = 8192
+            B = N
             batch_num = int(N/B)
 
             for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
@@ -950,6 +950,7 @@ class StochasticPolicyBidder(Bidder):
 
         # Prepare features
         X = torch.Tensor(np.hstack((contexts.reshape(-1,self.context_dim), estimated_CTRs.reshape(-1,1), values.reshape(-1,1)))).to(self.device)
+        N = X.size()[0]
         V = torch.Tensor(values).to(self.device)
         P = torch.Tensor(prices).to(self.device)
 
@@ -957,7 +958,7 @@ class StochasticPolicyBidder(Bidder):
             self.bidding_policy.initialise_policy(X, gammas)
 
         # Ensure we don't have propensities that are rounded to zero
-        propensities = torch.clip(torch.Tensor(self.propensities).to(self.device), min=1e-15)
+        propensities = torch.clip(torch.Tensor(self.propensities).to(self.device), min=1e-6)
 
         # Fit the model
         self.bidding_policy.train()
@@ -969,8 +970,7 @@ class StochasticPolicyBidder(Bidder):
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=100, min_lr=1e-8, factor=0.2, threshold=5e-3, verbose=True)
 
         losses = []
-        N = 8192
-        B = 8192
+        B = N
         batch_num = int(N/B)
         best_epoch, best_loss = -1, np.inf
 
@@ -1105,6 +1105,7 @@ class DDPGBidder(Bidder):
         ##############################
         gammas_numpy = np.array(self.gammas)
         X = np.hstack((contexts.reshape(-1, self.context_dim), estimated_CTRs.reshape(-1,1), values.reshape(-1,1), gammas_numpy.reshape(-1, 1)))
+        N = X.shape[0]
 
         X_aug_neg = X.copy()
         X_aug_neg[:, -1] = 0.0
@@ -1125,8 +1126,7 @@ class DDPGBidder(Bidder):
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=256, min_lr=1e-7, factor=0.2, verbose=True)
         losses = []
         best_epoch, best_loss = -1, np.inf
-        N = 8192
-        B = 8192
+        B = N
         batch_num = int(N/B)
 
         for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
@@ -1157,6 +1157,7 @@ class DDPGBidder(Bidder):
         ##############################
         gammas = torch.Tensor(self.gammas).to(self.device)
         X = torch.Tensor(np.hstack((contexts.reshape(-1,self.context_dim), estimated_CTRs.reshape(-1,1), values.reshape(-1,1)))).to(self.device)
+        N = X.size()[0]
         V = torch.Tensor(values).to(self.device)
         P = torch.Tensor(prices).to(self.device)
         
@@ -1172,8 +1173,7 @@ class DDPGBidder(Bidder):
 
         losses = []
         best_epoch, best_loss = -1, np.inf
-        N = 8192
-        B = 8192
+        B = N
         batch_num = int(N/B)
 
         self.winrate_model.requires_grad_(False)
