@@ -1189,8 +1189,6 @@ class DDPGBidder(Bidder):
 
                 if self.exploration_method=='Bayes by Backprop':
                     loss = self.bidding_policy.loss(self.winrate_model, X_mini, V_mini, P_mini, N)
-                elif self.exploration_method=='Entropy Regularization':
-                    loss = self.bidding_policy.loss(self.winrate_model, X_mini, V_mini, P_mini, entropy_factor=0.1)
                 else:
                     loss = self.bidding_policy.loss(self.winrate_model, X_mini, V_mini, P_mini)
                 loss.backward()

@@ -22,7 +22,7 @@
       }
     },
     {
-      "name": "DQN-BBB",
+      "name": "DQN-Gaussian",
       "num_copies": 1,
       "num_items": 12,
         "allocator": {
@@ -35,11 +35,11 @@
               "gamma_mu": 1.0,
               "gamma_sigma": 0.5,
               "context_dim": 8,
-              "method": "\"Bayes by Backprop\"",
-              "prior_var": 0.7
+              "method": "\"Gaussian Noise\"",
+              "noise": 0.05
             }
       }
     }],
-    "output_dir": "results/FP_DQN-BBB_TS_PO/",
+    "output_dir": "results/FP_DQN-Gaussian_TS_PO/",
     "network_architecture": "input-16-output"
   }

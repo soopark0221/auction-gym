@@ -397,7 +397,7 @@ class BayesianStochasticPolicy(nn.Module):
                 gamma_mini = gammas[i:i+B]
                 optimizer.zero_grad()
                 gamma_mu = F.softplus(self.mu_head(torch.relu(self.base(context_mini))))
-                gamma_sigma = F.softplus(self.sigma_head(torch.relu(self.base(context_mini))))
+                gamma_sigma = torch.sigmoid(self.sigma_head(torch.relu(self.base(context_mini))))
                 loss = metric(gamma_mu.squeeze(), gamma_mini) + 0.1 * metric(gamma_sigma.squeeze(), torch.ones_like(gamma_mini).to(self.device) * 0.5)
                 loss.backward()
                 optimizer.step()
@@ -420,7 +420,7 @@ class BayesianStochasticPolicy(nn.Module):
         # plt.show()
 
         pred_gamma_mu = F.softplus(self.mu_head(torch.relu(self.base(context_mini)))).numpy(force=True)
-        pred_gamma_sigma = F.softplus(self.sigma_head(torch.relu(self.base(context_mini)))).numpy(force=True)
+        pred_gamma_sigma = torch.sigmoid(self.sigma_head(torch.relu(self.base(context_mini)))).numpy(force=True)
         print('Predicted mu Gammas: ', pred_gamma_mu.min(), pred_gamma_mu.max(), pred_gamma_mu.mean())
         print('Predicted sigma Gammas: ', pred_gamma_sigma.min(), pred_gamma_sigma.max(), pred_gamma_sigma.mean())
 
@@ -428,13 +428,13 @@ class BayesianStochasticPolicy(nn.Module):
     def forward(self, x, MAP_propensity=True):
         hidden = torch.relu(self.base(x))
         mu = F.softplus(self.mu_head(hidden)).squeeze()
-        sigma = F.softplus(self.sigma_head(hidden)).squeeze() + self.min_sigma
+        sigma = torch.sigmoid(self.sigma_head(hidden)).squeeze() + self.min_sigma
         dist = torch.distributions.normal.Normal(mu, sigma)
         gamma = dist.rsample()
         if MAP_propensity:
             x_MAP = torch.relu(self.base(x, False))
             mu_MAP = F.softplus(self.mu_head(x_MAP, False)).squeeze()
-            sigma_MAP = F.softplus(self.sigma_head(x_MAP, False)).squeeze() + self.min_sigma
+            sigma_MAP = torch.sigmoid(self.sigma_head(x_MAP, False)).squeeze() + self.min_sigma
             dist_MAP = torch.distributions.normal.Normal(mu_MAP, sigma_MAP)
             propensity = torch.exp(dist_MAP.log_prob(gamma))
         else:
@@ -445,7 +445,7 @@ class BayesianStochasticPolicy(nn.Module):
     def normal_pdf(self, x, gamma):
         x = torch.relu(self.base(x))
         mu = F.softplus(self.mu_head(x)).squeeze()
-        sigma = F.softplus(self.sigma_head(x)).squeeze() + self.min_sigma
+        sigma = torch.sigmoid(self.sigma_head(x)).squeeze() + self.min_sigma
         dist = torch.distributions.Normal(mu, sigma)
         return dist, torch.exp(dist.log_prob(gamma))
 
@@ -539,9 +539,9 @@ class StochasticPolicy(nn.Module):
     def sigma(self, x):
         x = torch.relu(self.base(x))
         if self.dropout is None:
-            return F.softplus(self.sigma_head(x))
+            return torch.sigmoid(self.sigma_head(x))
         else:
-            return F.softplus(self.sigma_head(self.dropout_mu(x)))
+            return torch.sigmoid(self.sigma_head(self.dropout_mu(x)))
 
     def initialise_policy(self, contexts, gammas):
         # The first time, train the policy to imitate the logging policy

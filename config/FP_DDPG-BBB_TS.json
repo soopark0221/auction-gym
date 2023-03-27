@@ -36,7 +36,7 @@
               "gamma_sigma": 0.5,
               "context_dim": 8,
               "exploration_method": "\"Bayes by Backprop\"",
-              "prior_var": 0.1
+              "prior_var": 1.0
             }
       }
     }],
