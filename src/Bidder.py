@@ -16,7 +16,7 @@ class Bidder:
         self.rng = rng
         self.truthful = False # Default
 
-    def update(self, contexts, values, bids, prices, outcomes, estimated_CTRs, won_mask, iteration, plot, figsize, fontsize, name):
+    def update(self, contexts, values, bids, prices, outcomes, estimated_CTRs, won_mask, utilities, name):
         pass
 
     def clear_logs(self, memory):
@@ -32,7 +32,7 @@ class TruthfulBidder(Bidder):
         super(TruthfulBidder, self).__init__(rng)
         self.truthful = True
 
-    def bid(self, value, context, estimated_CTR):
+    def bid(self, value, context, estimated_CTR, clock):
         return value * estimated_CTR, 0.0
 
 
@@ -1039,12 +1039,12 @@ class StochasticPolicyBidder(Bidder):
 
 class DDPGBidder(Bidder):
 
-    def __init__(self, rng, gamma_mu, gamma_sigma, context_dim, exploration_method, noise=0.02, prior_var=1.0):
+    def __init__(self, rng, lr, gamma_mu, gamma_sigma, context_dim, exploration_method, noise=0.02, prior_var=1.0):
         super().__init__(rng)
-
+        self.lr = lr
         self.gamma_mu = gamma_mu
         self.gamma_sigma = gamma_sigma
-        self.context_dim = context_dim + 1
+        self.context_dim = context_dim
         self.gammas = []
         self.propensities = []
 
@@ -1067,7 +1067,7 @@ class DDPGBidder(Bidder):
         self.bidding_policy.to(self.device)
         self.model_initialised = False
 
-    def bid(self, value, context, estimated_CTR):
+    def bid(self, value, context, estimated_CTR, clock):
         # Compute the bid as expected value
         bid = value * estimated_CTR
         if not self.model_initialised:
@@ -1094,12 +1094,7 @@ class DDPGBidder(Bidder):
         self.propensities.append(1.0)
         return bid, 0.0
 
-    def update(self, contexts, values, bids, prices, outcomes, estimated_CTRs, won_mask, iteration, plot, figsize, fontsize, name):
-        # Compute net utility
-        utilities = np.zeros_like(values)
-        utilities[won_mask] = (values[won_mask] * outcomes[won_mask]) - prices[won_mask]
-        # utilities = torch.Tensor(utilities)
-
+    def update(self, contexts, values, bids, prices, outcomes, estimated_CTRs, won_mask, utilities, name):
         ##############################
         # 1. TRAIN UTILITY ESTIMATOR #
         ##############################
@@ -1121,12 +1116,11 @@ class DDPGBidder(Bidder):
         # Fit the model
         self.winrate_model.train()
         epochs = 10000
-        lr = 1e-3
-        optimizer = torch.optim.Adam(self.winrate_model.parameters(), lr=lr, weight_decay=1e-6, amsgrad=True)
+        optimizer = torch.optim.Adam(self.winrate_model.parameters(), lr=self.lr, weight_decay=1e-6, amsgrad=True)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=256, min_lr=1e-7, factor=0.2, verbose=True)
         losses = []
         best_epoch, best_loss = -1, np.inf
-        B = N
+        B = min(4096, N)
         batch_num = int(N/B)
 
         for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
@@ -1167,13 +1161,12 @@ class DDPGBidder(Bidder):
         # Fit the model
         self.bidding_policy.train()
         epochs = 10000
-        lr = 1e-3
-        optimizer = torch.optim.Adam(self.bidding_policy.parameters(), lr=lr, weight_decay=1e-4, amsgrad=True)
+        optimizer = torch.optim.Adam(self.bidding_policy.parameters(), lr=self.lr, weight_decay=1e-6, amsgrad=True)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=100, min_lr=1e-8, factor=0.2, threshold=5e-3, verbose=True)
 
         losses = []
         best_epoch, best_loss = -1, np.inf
-        B = N
+        B = min(4096, N)
         batch_num = int(N/B)
 
         self.winrate_model.requires_grad_(False)
@@ -1215,12 +1208,6 @@ class DDPGBidder(Bidder):
         self.bidding_policy.eval()
         self.model_initialised = True
         self.bidding_policy.model_initialised = True
-
-    def clear_logs(self, memory):
-        if not memory:
-            self.gammas = []
-        else:
-            self.gammas = self.gammas[-memory:]
     
     def get_uncertainty(self):
         if self.exploration_method in ['NoisyNet', 'Bayes by Backprop']:

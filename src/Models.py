@@ -94,12 +94,38 @@ class PyTorchLogisticRegression(torch.nn.Module):
     def update_prior(self):
         self.prev_iter_m = self.m.detach().clone()
 
+class NeuralRegression(nn.Module):
+    def __init__(self, n_dim, n_items, mode='Epsilon-greedy'):
+        super(PyTorchLogisticRegression, self).__init__()
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.mode = mode
+        self.n_dim = n_dim
+        self.n_items = n_items
+        self.prior_var = 1.0
+        self.linear1 = BayesianLinear(n_dim, 2*n_dim)
+        self.linear2 = BayesianLinear(2*n_dim, n_items)
+        self.criterion = nn.BCELoss()
+        self.eval()
+
+    def forward(self, x, sample=False):
+        ''' Predict outcome for all items, allow for posterior sampling '''
+        x = torch.relu(self.linear1(x, sample))
+        return torch.sigmoid(self.linear2(x, sample))
+
+    def predict_item(self, x, a):
+        ''' Predict outcome for an item a, only MAP '''
+        return self(x, True)[range(a.size(0)),a]
+
+    def loss(self, predictions, labels, N):
+        kl_div = self.linear1.KL_div(self.prior_var) + self.linear2.KL_div(self.prior_var)
+        return self.criterion(predictions, labels) + kl_div / N
+
 
 class PyTorchWinRateEstimator(torch.nn.Module):
     def __init__(self, context_dim):
         super(PyTorchWinRateEstimator, self).__init__()
         self.ffn = torch.nn.Sequential(
-            torch.nn.Linear(context_dim+4, 1, bias=True),
+            torch.nn.Linear(context_dim+3, 1, bias=True),
             torch.nn.Sigmoid()
         )
         self.metric = nn.BCELoss()
@@ -116,7 +142,7 @@ class NeuralWinRateEstimator(nn.Module):
     def __init__(self, context_dim):
         super(NeuralWinRateEstimator, self).__init__()
         self.ffn = nn.Sequential(*[
-            nn.Linear(context_dim+4,16),
+            nn.Linear(context_dim+3,16),
             nn.ReLU(),
             nn.Linear(16,1)]
             )
@@ -133,7 +159,7 @@ class NeuralWinRateEstimator(nn.Module):
 class BBBWinRateEstimator(nn.Module):
     def __init__(self, context_dim):
         super(BBBWinRateEstimator, self).__init__()
-        self.linear1 = BayesianLinear(context_dim+4,16)
+        self.linear1 = BayesianLinear(context_dim+3,16)
         self.relu = nn.ReLU()
         self.linear2 = BayesianLinear(16,1)
         self.metric = nn.BCEWithLogitsLoss()
@@ -159,7 +185,7 @@ class MCDropoutWinRateEstimator(nn.Module):
     def __init__(self, context_dim):
         super().__init__()
         self.ffn = nn.Sequential(*[
-            nn.Linear(context_dim+4,16),
+            nn.Linear(context_dim+3,16),
             nn.Dropout(0.8),
             nn.ReLU(),
             nn.Linear(16,1)])
@@ -176,7 +202,7 @@ class MCDropoutWinRateEstimator(nn.Module):
 class NoisyNetWinRateEstimator(nn.Module):
     def __init__(self, context_dim):
         super().__init__()
-        self.linear1 = BayesianLinear(context_dim+4,16)
+        self.linear1 = BayesianLinear(context_dim+3,16)
         self.relu = nn.ReLU()
         self.linear2 = BayesianLinear(16,1)
         self.metric = nn.BCEWithLogitsLoss()
@@ -675,9 +701,9 @@ class DeterministicPolicy(nn.Module):
         super().__init__()
 
         self.ffn = nn.Sequential(*[
-            nn.Linear(context_dim+3, 8),
+            nn.Linear(context_dim+2, 16),
             nn.ReLU(),
-            nn.Linear(8, 1),
+            nn.Linear(16, 1),
             nn.Softplus()
             ])
         self.eval()
@@ -692,7 +718,7 @@ class DeterministicPolicy(nn.Module):
         losses = []
         best_epoch, best_loss = -1, np.inf
         N = context.size()[0]
-        B = N
+        B = min(4096, N)
         batch_num = int(N/B)
 
         for epoch in tqdm(range(int(epochs)), desc=f'Initialising Policy'):
@@ -721,13 +747,13 @@ class DeterministicPolicy(nn.Module):
         gamma_pred = self(context).reshape(-1,1)
         winrate = winrate_model(torch.cat([context, gamma_pred], dim=1))
         utility = winrate * (value - price * gamma_pred)
-        return torch.mean(utility)
+        return -torch.mean(utility)
 
 class BayesianDeterministicPolicy(nn.Module):
     def __init__(self, context_dim, prior_var=None):
         super().__init__()
 
-        self.linear1 = BayesianLinear(context_dim+3, 16)
+        self.linear1 = BayesianLinear(context_dim+2, 16)
         self.linear2 = BayesianLinear(16, 1)
         self.eval()
 
@@ -744,7 +770,7 @@ class BayesianDeterministicPolicy(nn.Module):
         losses = []
         best_epoch, best_loss = -1, np.inf
         N = context.size()[0]
-        B = N
+        B = min(4096, N)
         batch_num = int(N/B)
 
         for epoch in tqdm(range(int(epochs)), desc=f'Initialising Policy'):
@@ -782,10 +808,10 @@ class BayesianDeterministicPolicy(nn.Module):
         winrate = winrate_model(torch.cat([context, gamma_pred], dim=1))
         utility = winrate * (value - price * gamma_pred)
         if self.prior_var is None:
-            return torch.mean(utility)
+            return -torch.mean(utility)
         else:
             kl_penalty = (self.linear1.KL_div(self.prior_var) + self.linear2.KL_div(self.prior_var))/N
-            return torch.mean(utility) + kl_penalty
+            return -torch.mean(utility) + kl_penalty
     
     def get_uncertainty(self):
         uncertainties = [self.linear1.get_uncertainty(),

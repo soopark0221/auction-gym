@@ -8,7 +8,7 @@ from Models import sigmoid
 
 class Auction:
     ''' Base class for auctions '''
-    def __init__(self, rng, allocation, agents, agent2items, agents2item_values, max_slots, embedding_size, embedding_var, obs_embedding_size, num_participants_per_round):
+    def __init__(self, rng, allocation, agents, agent2items, agents2item_values, max_slots, context_dim, obs_context_dim, context_dist, num_participants_per_round):
         self.rng = rng
         self.allocation = allocation
         self.agents = agents
@@ -18,22 +18,34 @@ class Auction:
         self.agent2items = agent2items
         self.agents2item_values = agents2item_values
 
-        self.embedding_size = embedding_size
-        self.embedding_var = embedding_var
-
-        self.obs_embedding_size = obs_embedding_size
+        self.context_dim = context_dim
+        self.obs_context_dim = obs_context_dim
+        self.context_dist = context_dist # Gaussian, Bernoulli, Uniform
+        self.gaussian_var = 1.0
+        self.bernoulli_p = 0.5
 
         self.num_participants_per_round = num_participants_per_round
+    
+    def generate_context(self):
+        if self.context_dist=='Gaussian':
+            return self.rng.normal(0.0, 1.0, size=self.context_dim)
+        elif self.context_dist=='Bernoulli':
+            return self.rng.binomial(1, self.bernoulli_p, size=self.context_dim)
+        else:
+            return self.rng.uniform(-1.0, 1.0, size=self.context_dim)
+    
+    def CTR(self, context, item_features):
+        return sigmoid(context @ item_features.T / np.sqrt(self.context_dim))
 
     def simulate_opportunity(self):
         # Sample the number of slots uniformly between [1, max_slots]
         num_slots = self.rng.integers(1, self.max_slots + 1)
 
         # Sample a true context vector
-        true_context = np.concatenate((self.rng.normal(0, self.embedding_var, size=self.embedding_size), [1.0]))
+        true_context = self.generate_context()
 
         # Mask true context into observable context
-        obs_context = np.concatenate((true_context[:self.obs_embedding_size], [1.0]))
+        obs_context = true_context[:self.obs_context_dim]
 
         # At this point, the auctioneer solicits bids from
         # the list of bidders that might want to compete.
@@ -49,7 +61,7 @@ class Auction:
                 bid, item = agent.bid(obs_context)
             bids.append(bid)
             # Compute the true CTRs for items in this agent's catalogue
-            true_CTR = sigmoid(true_context @ self.agent2items[agent.name].T)
+            true_CTR = self.CTR(true_context, self.agent2items[agent.name])
             agent.logs[-1].set_true_CTR(np.max(true_CTR * self.agents2item_values[agent.name]), true_CTR[item])
             CTRs.append(true_CTR[item])
         bids = np.array(bids)
@@ -72,6 +84,9 @@ class Auction:
                 else:
                     agent.set_price(price)
             self.revenue += price
+        
+        for agent in participating_agents:
+            agent.update()
 
     def clear_revenue(self):
         self.revenue = 0.0

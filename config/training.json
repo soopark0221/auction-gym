@@ -1,0 +1,13 @@
+{
+    "random_seed": 0,
+    "num_runs": 3,
+    "num_iter" : 100000,
+    "record_interval": 5000,
+    "num_participants_per_round": 3,
+    "context_dim": 10,
+    "obs_context_dim": 8,
+    "item_feature_var": 1.0,
+    "context_distribution": "Gaussian",
+    "allocation": "FirstPrice",
+    "network_architecture": "input-16-output"
+}
