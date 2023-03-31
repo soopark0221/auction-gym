@@ -27,8 +27,8 @@ class BayesianLinear(nn.Module):
     
     def reset_parameters(self):
         nn.init.kaiming_uniform_(self.weight_mu)
-        nn.init.kaiming_uniform_(self.weight_rho)
-        nn.init.uniform_(self.bias_mu, -0.02, 0.02)
+        nn.init.uniform_(self.weight_rho, -0.02, 0.02)
+        nn.init.uniform_(self.bias_mu, -np.sqrt(3/self.weight_mu.size(0)), np.sqrt(3/self.weight_mu.size(0)))
         nn.init.uniform_(self.bias_rho, -0.02, 0.02)
         
     def forward(self, input, sample=True):
@@ -96,14 +96,14 @@ class PyTorchLogisticRegression(torch.nn.Module):
 
 class NeuralRegression(nn.Module):
     def __init__(self, n_dim, n_items, mode='Epsilon-greedy'):
-        super(PyTorchLogisticRegression, self).__init__()
+        super().__init__()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.mode = mode
         self.n_dim = n_dim
         self.n_items = n_items
         self.prior_var = 1.0
-        self.linear1 = BayesianLinear(n_dim, 2*n_dim)
-        self.linear2 = BayesianLinear(2*n_dim, n_items)
+        self.linear1 = BayesianLinear(n_dim, n_dim)
+        self.linear2 = BayesianLinear(n_dim, n_items)
         self.criterion = nn.BCELoss()
         self.eval()
 

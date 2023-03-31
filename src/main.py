@@ -58,7 +58,7 @@ def parse_agent_config(rng, context_dim, obs_context_dim, item_feature_var, path
     return agent_configs, agents2items, agents2item_values, output_dir
 
 
-def instantiate_agents(rng, agent_configs, agents2item_values, agents2items, obs_context_dim):
+def instantiate_agents(rng, agent_configs, agents2item_values, agents2items, obs_context_dim, update_schedule):
     # Store agents to be re-instantiated in subsequent runs
     # Set up agents
     agents = [
@@ -69,6 +69,7 @@ def instantiate_agents(rng, agent_configs, agents2item_values, agents2items, obs
               allocator=eval(f"{agent_config['allocator']['type']}(rng=rng{parse_kwargs(agent_config['allocator']['kwargs'])})"),
               bidder=eval(f"{agent_config['bidder']['type']}(rng=rng{parse_kwargs(agent_config['bidder']['kwargs'])})"),
               context_dim = obs_context_dim,
+              update_schedule=update_schedule,
               memory=('inf' if 'memory' not in agent_config.keys() else agent_config['memory']))
         for agent_config in agent_configs
     ]
@@ -112,9 +113,11 @@ def simulation_run(run):
 
                 agent2bidding_var[agent.name].append(agent.get_bidding_var())
                 agent2uncertainty[agent.name].append(agent.get_uncertainty())
+                agent2winning_prob[agent.name].append(agent.get_winning_prob())
+                agent2CTR[agent.name].append(agent.get_CTRs())
 
                 if not isinstance(agent.bidder, TruthfulBidder):
-                    agent2gamma[agent.name].append(np.array(agent.bidder.gammas))
+                    agent2gamma[agent.name].append(np.array(agent.get_gamma()))
 
                 best_expected_value = np.mean([opp.best_expected_value for opp in agent.logs])
                 agent2best_expected_value[agent.name].append(best_expected_value)
@@ -142,6 +145,7 @@ if __name__ == '__main__':
     num_runs = training_config['num_runs']
     num_iter  = training_config['num_iter']
     record_interval = training_config['record_interval']
+    update_schedule = training_config['update_schedule']
 
     # Max. number of slots in every auction round
     # Multi-slot is currently not fully supported.
@@ -179,13 +183,15 @@ if __name__ == '__main__':
 
     run2agent2bidding_var = {}
     run2agent2uncertainty = {}
+    run2agent2winning_prob = {}
+    run2agent2CTR = {}
 
     run2auction_revenue = {}
 
     # Repeated runs
     for run in range(num_runs):
         # Reinstantiate agents and auction per run
-        agents = instantiate_agents(rng, agent_configs, agents2item_values, agents2items, obs_context_dim)
+        agents = instantiate_agents(rng, agent_configs, agents2item_values, agents2items, obs_context_dim, update_schedule)
         auction  = instantiate_auction(
             rng, training_config, agents2items, agents2item_values, agents, max_slots, context_dim, obs_context_dim, context_dist)
         
@@ -204,6 +210,8 @@ if __name__ == '__main__':
 
         agent2bidding_var = defaultdict(list)
         agent2uncertainty = defaultdict(list)
+        agent2winning_prob = defaultdict(list)
+        agent2CTR = defaultdict(list)
 
         auction_revenue = []
 
@@ -225,6 +233,8 @@ if __name__ == '__main__':
 
         run2agent2bidding_var[run] = agent2bidding_var
         run2agent2uncertainty[run] = agent2uncertainty
+        run2agent2winning_prob[run] = agent2winning_prob
+        run2agent2CTR[run] = agent2CTR
 
         run2auction_revenue[run] = auction_revenue
 
@@ -305,7 +315,7 @@ if __name__ == '__main__':
         min_measure, max_measure = 0.0, 0.0
         sns.boxplot(data=df, x="Step", y=measure_name, hue="Agent", ax=axes)
         plt.xticks(fontsize=FONTSIZE - 2)
-        plt.ylabel('Step', fontsize=FONTSIZE)
+        plt.ylabel(measure_name, fontsize=FONTSIZE)
         if optimal is not None:
             plt.axhline(optimal, ls='--', color='gray', label='Optimal')
             min_measure = min(min_measure, optimal)
@@ -351,6 +361,12 @@ if __name__ == '__main__':
     uncertainty_df = plot_vector_measure_per_agent(run2agent2uncertainty, 'Uncertainty in Parameters')
     bidding_var_df.to_csv(f'{output_dir}/bidding_variance.csv', index=False)
     uncertainty_df.to_csv(f'{output_dir}/uncertainty.csv', index=False)
+
+    winning_prob_df = plot_measure_per_agent(run2agent2winning_prob, 'Probability of winning')
+    winning_prob_df.to_csv(f'{output_dir}/winning_probability.csv', index=False)
+
+    CTR_df = plot_vector_measure_per_agent(run2agent2CTR, 'CTR')
+    CTR_df.to_csv(f'{output_dir}/CTR.csv', index=False)
     
     shading_factor_df = plot_vector_measure_per_agent(run2agent2gamma, 'Shading Factors')
 

@@ -131,4 +131,4 @@ class OracleAllocator(Allocator):
         self.item_embeddings = item_embeddings
 
     def estimate_CTR(self, context):
-        return sigmoid(self.item_embeddings @ context)
+        return sigmoid(self.item_embeddings @ context / np.sqrt(context.shape[0]))

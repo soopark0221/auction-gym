@@ -9,7 +9,7 @@ from Bidder import TruthfulBidder
 class Agent:
     ''' An agent representing an advertiser '''
 
-    def __init__(self, rng, name, num_items, item_values, allocator, bidder, context_dim, memory):
+    def __init__(self, rng, name, num_items, item_values, allocator, bidder, context_dim, update_schedule, memory):
         self.rng = rng
         self.name = name
         self.num_items = num_items
@@ -25,9 +25,32 @@ class Agent:
         
         self.clock = 0
         self.record_index = 0
+        if update_schedule.split()[0]=='doubling':
+            self.update_schecule = 'doubling'
+            self.exploration_steps = int(update_schedule.split()[1])
+        elif update_schedule.split()[0]=='even':
+            self.update_schecule = 'even'
+            self.update_interval = int(update_schedule.split()[1])
         self.memory = memory
 
         self.bidding_variance = []
+    
+    def should_explore(self):
+        if self.update_schecule!='doubling':
+            return False
+        b = 1
+        while self.clock >= b:
+            b = b<<1
+        return self.clock - b>>1 < self.exploration_steps
+    
+    def should_update(self):
+        if self.update_schecule=='doubling':
+            b = 1
+            while self.clock >= b:
+                b = b<<1
+            return self.clock == b>>1 and b>=1024
+        else:
+            return self.clock%self.update_interval==0
 
     def select_item(self, context):
         # Estimate CTR for all items
@@ -54,8 +77,13 @@ class Agent:
         if isinstance(self.allocator, OracleAllocator):
             context =context[:self.context_dim]
 
-        # Get the bid
-        bid, variance = self.bidder.bid(value, context, estimated_CTR, self.clock)
+        if self.should_explore():
+            bid, variance = value*self.rng.uniform(0.1, 1.5), 0.0
+            if not isinstance(self.bidder, TruthfulBidder):
+                self.bidder.gammas.append(bid)
+            variance = 0.0
+        else:
+            bid, variance = self.bidder.bid(value, context, estimated_CTR, self.clock)
 
         # Log what we know so far
         self.logs.append(ImpressionOpportunity(context=context,
@@ -89,7 +117,7 @@ class Agent:
 
     def update(self):
         # update schedule here
-        if self.clock%5000!=0:
+        if not self.should_update():
             return
         
         # Gather relevant logs
@@ -145,7 +173,16 @@ class Agent:
         self.record_index = len(self.logs)
 
     def get_net_utility(self):
-        return np.mean(list(opp.utility for opp in self.logs[self.record_index:]))
+        return np.sum(list(opp.utility for opp in self.logs[self.record_index:]))
     
     def get_gross_utility(self):
-        return np.mean(list(opp.gross_utility for opp in self.logs[self.record_index:]))
+        return np.sum(list(opp.gross_utility for opp in self.logs[self.record_index:]))
+
+    def get_gamma(self):
+        return np.array(list(opp.bid/opp.value for opp in self.logs[self.record_index:]))
+
+    def get_winning_prob(self):
+        return np.mean(list(opp.won for opp in self.logs[self.record_index:]))
+    
+    def get_CTRs(self):
+        return np.array(list(opp.true_CTR for opp in self.logs[self.record_index:]))

@@ -1082,12 +1082,12 @@ class DDPGBidder(Bidder):
                 if self.exploration_method=='SWAG':
                     self.SWAG.sample()
                 gamma = self.bidding_policy(x)
-                gamma = torch.clip(gamma, 0.0, 1.0)
         
         if self.model_initialised:
             gamma = gamma.detach().item()
         if self.exploration_method=='Gaussian noise':
-            gamma = np.clip(gamma+self.rng.normal(0,self.noise), 0.1, 1.5)
+            gamma += self.rng.normal(0,self.noise)
+        gamma = np.clip(gamma, 0.1, 1.5)
         bid *= gamma
         self.gammas.append(gamma)
         # don't care
@@ -1120,7 +1120,7 @@ class DDPGBidder(Bidder):
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=256, min_lr=1e-7, factor=0.2, verbose=True)
         losses = []
         best_epoch, best_loss = -1, np.inf
-        B = min(4096, N)
+        B = min(8192, N)
         batch_num = int(N/B)
 
         for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
@@ -1166,7 +1166,7 @@ class DDPGBidder(Bidder):
 
         losses = []
         best_epoch, best_loss = -1, np.inf
-        B = min(4096, N)
+        B = min(8192, N)
         batch_num = int(N/B)
 
         self.winrate_model.requires_grad_(False)
