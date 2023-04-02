@@ -65,10 +65,10 @@ class PyTorchLogisticRegression(torch.nn.Module):
     def __init__(self, n_dim, n_items):
         super(PyTorchLogisticRegression, self).__init__()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.m = torch.nn.Parameter(torch.Tensor(n_items, n_dim + 1))
+        self.m = torch.nn.Parameter(torch.Tensor(n_items, n_dim))
         torch.nn.init.normal_(self.m, mean=0.0, std=1.0)
         self.prev_iter_m = self.m.detach().clone().to(self.device)
-        self.q = torch.ones((n_items, n_dim + 1)).to(self.device)
+        self.q = torch.ones((n_items, n_dim)).to(self.device)
         self.logloss = torch.nn.BCELoss(reduction='sum')
         self.eval()
 

@@ -28,7 +28,7 @@ class PyTorchLogisticRegressionAllocator(Allocator):
         self.response_model.to(self.device)
         super(PyTorchLogisticRegressionAllocator, self).__init__(rng)
 
-    def update(self, contexts, items, outcomes, iteration, plot, figsize, fontsize, name):
+    def update(self, contexts, items, outcomes, name):
         # Rename
         X, A, y = contexts, items, outcomes
 
