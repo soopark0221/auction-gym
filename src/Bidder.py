@@ -1046,7 +1046,6 @@ class DDPGBidder(Bidder):
         self.gamma_sigma = gamma_sigma
         self.context_dim = context_dim
         self.gammas = []
-        self.propensities = []
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -1090,8 +1089,6 @@ class DDPGBidder(Bidder):
         gamma = np.clip(gamma, 0.1, 1.5)
         bid *= gamma
         self.gammas.append(gamma)
-        # don't care
-        self.propensities.append(1.0)
         return bid, 0.0
 
     def update(self, contexts, values, bids, prices, outcomes, estimated_CTRs, won_mask, utilities, name):

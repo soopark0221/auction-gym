@@ -31,8 +31,8 @@
           "kwargs": {
             "context_dim": 8,
             "num_items": 12,
-            "mode": "\"Epsilon-greedy\"",
-            "eps": 0.1
+            "mode": "\"Bayes by Backprop\"",
+            "prior_var": 0.1
           }
         },
         "bidder": {
@@ -46,7 +46,7 @@
               "noise": 0.05
             }
       },
-      "memory": "inf"
+      "memory": 50000
     }],
     "output_dir": "results/FP_DDPG-Gaussian_TS_PO/",
     "network_architecture": "input-16-output"

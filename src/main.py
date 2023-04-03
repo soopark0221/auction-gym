@@ -10,6 +10,7 @@ from collections import defaultdict
 from copy import deepcopy
 from tqdm import tqdm
 import time
+import pickle
 
 from Agent import Agent
 from AuctionAllocation import * # FirstPrice, SecondPrice
@@ -127,6 +128,27 @@ def simulation_run(run):
 
             auction_revenue.append(auction.revenue)
             auction.clear_revenue()
+    for agent in auction.agents:
+        if agent.name.rfind('Competitor')<0:
+            for i in range(1):
+                context = auction.generate_context()
+                obs_context = context[:obs_context_dim]
+                if isinstance(agent.allocator, OracleAllocator):
+                    item, estimated_CTR = agent.select_item(context)
+                else:
+                    item, estimated_CTR = agent.select_item(obs_context)
+                value = agent.item_values[item]
+                gamma = np.linspace(0.1, 1.5, 128).reshape(-1,1)
+                x = np.concatenate([
+                    np.tile(obs_context, (128, 1)),
+                    np.tile(estimated_CTR, (128,1)),
+                    np.tile(value, (128,1)),
+                    gamma
+                ], axis=1)
+                x = torch.Tensor(x).to(agent.bidder.device)
+                y = agent.bidder.winrate_model(x).numpy(force=True).reshape(-1,1)
+                agent2critic_estimation[agent.name].append(np.concatenate([gamma, y], axis=1))
+                
 
 if __name__ == '__main__':
     # Parse commandline arguments
@@ -186,6 +208,8 @@ if __name__ == '__main__':
     run2agent2winning_prob = {}
     run2agent2CTR = {}
 
+    run2agent2critic_estimation = {}
+
     run2auction_revenue = {}
 
     # Repeated runs
@@ -213,6 +237,8 @@ if __name__ == '__main__':
         agent2winning_prob = defaultdict(list)
         agent2CTR = defaultdict(list)
 
+        agent2critic_estimation = defaultdict(list)
+
         auction_revenue = []
 
         # Run simulation (with global parameters -- fine for the purposes of this script)
@@ -236,13 +262,16 @@ if __name__ == '__main__':
         run2agent2winning_prob[run] = agent2winning_prob
         run2agent2CTR[run] = agent2CTR
 
+        run2agent2critic_estimation[run] = agent2critic_estimation
+
         run2auction_revenue[run] = auction_revenue
 
     output_dir = output_dir + time.strftime('%y%m%d-%H%M%S')
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
     
-    shutil.copy(args.config, os.path.join(output_dir, 'config.json'))
+    shutil.copy(args.config, os.path.join(output_dir, 'agent_config.json'))
+    shutil.copy('config/training.json', os.path.join(output_dir, 'training_config.json'))
 
     def measure_per_agent2df(run2agent2measure, measure_name):
         df_rows = {'Run': [], 'Agent': [], 'Step': [], measure_name: []}
@@ -266,6 +295,19 @@ if __name__ == '__main__':
                         df_rows['Step'].append(iteration)
                         df_rows['Parameter'].append(index)
                         df_rows[measure_name].append(measure)
+        return pd.DataFrame(df_rows)
+    
+    def critic_estimation2df(run2agent2critic_estim):
+        df_rows = {'Run': [], 'Agent': [], 'Rep': [], 'Gamma':[], 'Winrate': []}
+        for run, agent2critic_estim in run2agent2critic_estim.items():
+            for agent, critic_estim in agent2critic_estim.items():
+                for rep, array in enumerate(critic_estim):
+                    for i in range(array.shape[0]):
+                        df_rows['Run'].append(run)
+                        df_rows['Agent'].append(agent)
+                        df_rows['Rep'].append(rep)
+                        df_rows['Gamma'].append(array[i,0])
+                        df_rows['Winrate'].append(array[i,1])
         return pd.DataFrame(df_rows)
 
     def plot_measure_per_agent(run2agent2measure, measure_name, cumulative=False, log_y=False, yrange=None, optimal=None):
@@ -332,6 +374,27 @@ if __name__ == '__main__':
         plt.savefig(f"{output_dir}/{measure_name.replace(' ', '_')}.png", bbox_inches='tight')
         # plt.show()
         return df
+    
+    def plot_critic_estimation(run2agent2critic_estim):
+        # Generate DataFrame for Seaborn
+        if type(run2agent2critic_estim) != pd.DataFrame:
+            df = critic_estimation2df(run2agent2critic_estim)
+        else:
+            df = run2agent2critic_estim
+
+        fig, axes = plt.subplots(figsize=FIGSIZE)
+        plt.title('Winrate Estimation', fontsize=FONTSIZE + 2)
+        sns.lineplot(data=df, x="Gamma", y="Winrate", hue="Run", style="Rep", ax=axes)
+        plt.xticks(fontsize=FONTSIZE - 2)
+        plt.ylabel('Winrate', fontsize=FONTSIZE)
+        plt.yticks(fontsize=FONTSIZE - 2)
+        plt.legend(loc='lower right', fontsize=FONTSIZE, ncol=3)
+        plt.tight_layout()
+        plt.savefig(f"{output_dir}/winrate_estimation.png", bbox_inches='tight')
+        return df
+    
+    critic_estim_df = plot_critic_estimation(run2agent2critic_estimation)
+    critic_estim_df.to_csv(f'{output_dir}/winrate_estimation.csv', index=False)
 
     net_utility_df = plot_measure_per_agent(run2agent2net_utility, 'Net Utility').sort_values(['Agent', 'Run', 'Step'])
     net_utility_df.to_csv(f'{output_dir}/net_utility.csv', index=False)

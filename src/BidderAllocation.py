@@ -5,7 +5,7 @@ from sklearn.metrics import log_loss, roc_auc_score
 from sklearn.model_selection import train_test_split
 from tqdm import tqdm
 
-from Models import PyTorchLogisticRegression, NeuralRegression, sigmoid
+from Models import PyTorchLogisticRegression, NeuralRegression, BayesianNeuralRegression, sigmoid
 
 
 class Allocator:
@@ -71,9 +71,13 @@ class PyTorchLogisticRegressionAllocator(Allocator):
                                    sample=(self.thompson_sampling and sample)).numpy(force=True)
     
 class NeuralAllocator(Allocator):
-    def __init__(self, rng, context_dim, num_items, thompson_sampling=True):
-        self.response_model = NeuralRegression(n_dim=context_dim, n_items=num_items)
-        self.thompson_sampling = thompson_sampling
+    def __init__(self, rng, context_dim, num_items, mode, eps=0.1, prior_var=1.0):
+        self.mode = mode # epsilon-greedy, BBB
+        if self.mode=='Epsilon-greedy':
+            self.response_model = NeuralRegression(n_dim=context_dim, n_items=num_items)
+            self.eps = eps
+        elif self.mode=='Bayes by Backprop':
+            self.response_model = BayesianNeuralRegression(n_dim=context_dim, n_items=num_items, prior_var=prior_var)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.response_model.to(self.device)
         super().__init__(rng)
@@ -104,7 +108,10 @@ class NeuralAllocator(Allocator):
                 A_mini = A[i:i+B]
                 y_mini = y[i:i+B]
                 optimizer.zero_grad()
-                loss = self.response_model.loss(self.response_model.predict_item(X_mini, A_mini).squeeze(), y_mini, N)
+                if self.mode=='Epsilon-greedy':
+                    loss = self.response_model.loss(self.response_model.predict_item(X_mini, A_mini).squeeze(), y_mini)
+                elif self.mode=='Bayes by Backprop':
+                    loss = self.response_model.loss(self.response_model.predict_item(X_mini, A_mini).squeeze(), y_mini, N)
                 loss.backward()
                 optimizer.step()
                 losses.append(loss.item())
@@ -116,8 +123,10 @@ class NeuralAllocator(Allocator):
         self.response_model.eval()
 
     def estimate_CTR(self, context, sample=True):
-        return self.response_model(torch.from_numpy(context.astype(np.float32)).to(self.device),
-                                   sample=(self.thompson_sampling and sample)).numpy(force=True)
+        if self.mode=='Epsilon-greedy':
+            return self.response_model(torch.from_numpy(context.astype(np.float32)).to(self.device)).numpy(force=True)
+        elif self.mode=='Bayes by Backprop':
+            return self.response_model(torch.from_numpy(context.astype(np.float32)).to(self.device), sample=sample).numpy(force=True)
 
 
 class OracleAllocator(Allocator):

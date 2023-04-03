@@ -94,14 +94,13 @@ class PyTorchLogisticRegression(torch.nn.Module):
     def update_prior(self):
         self.prev_iter_m = self.m.detach().clone()
 
-class NeuralRegression(nn.Module):
-    def __init__(self, n_dim, n_items, mode='Epsilon-greedy'):
+class BayesianNeuralRegression(nn.Module):
+    def __init__(self, n_dim, n_items, prior_var):
         super().__init__()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.mode = mode
         self.n_dim = n_dim
         self.n_items = n_items
-        self.prior_var = 1.0
+        self.prior_var = prior_var
         self.linear1 = BayesianLinear(n_dim, n_dim)
         self.linear2 = BayesianLinear(n_dim, n_items)
         self.criterion = nn.BCELoss()
@@ -119,6 +118,30 @@ class NeuralRegression(nn.Module):
     def loss(self, predictions, labels, N):
         kl_div = self.linear1.KL_div(self.prior_var) + self.linear2.KL_div(self.prior_var)
         return self.criterion(predictions, labels) + kl_div / N
+
+class NeuralRegression(nn.Module):
+    def __init__(self, n_dim, n_items):
+        super().__init__()
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.n_dim = n_dim
+        self.n_items = n_items
+        self.ffn = nn.Sequential(*[
+            nn.Linear(self.n_dim, self.n_dim),
+            nn.ReLU(),
+            nn.Linear(self.n_dim, self.n_items),
+            nn.Sigmoid()
+        ])
+        self.criterion = nn.BCELoss()
+        self.eval()
+
+    def forward(self, x):
+        return self.ffn(x)
+
+    def predict_item(self, x, a):
+        return self(x)[range(a.size(0)),a]
+
+    def loss(self, predictions, labels):
+        return self.criterion(predictions, labels)
 
 
 class PyTorchWinRateEstimator(torch.nn.Module):

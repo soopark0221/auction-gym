@@ -1,9 +1,9 @@
 {
     "random_seed": 42,
     "num_runs": 3,
-    "num_iter" : 100000,
+    "num_iter" : 200000,
     "record_interval": 5000,
-    "update_schedule": "doubling 500",
+    "update_schedule": "even 5000",
     "num_participants_per_round": 3,
     "context_dim": 10,
     "obs_context_dim": 8,

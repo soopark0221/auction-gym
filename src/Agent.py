@@ -1,6 +1,6 @@
 import numpy as np
 
-from BidderAllocation import PyTorchLogisticRegressionAllocator, OracleAllocator
+from BidderAllocation import PyTorchLogisticRegressionAllocator, OracleAllocator, NeuralAllocator
 from Impression import ImpressionOpportunity
 from Models import sigmoid
 from Bidder import TruthfulBidder
@@ -59,9 +59,12 @@ class Agent:
         estim_values = estim_CTRs * self.item_values
         # Pick the best item (according to TS)
         best_item = np.argmax(estim_values)
+        if isinstance(self.allocator, NeuralAllocator) and self.allocator.mode=='Epsilon-greedy':
+            if self.rng.uniform(0,1)<self.allocator.eps:
+                best_item = self.rng.choice(self.num_items, 1).item()
 
         # If we do Thompson Sampling, don't propagate the noisy bid amount but bid using the MAP estimate
-        if not isinstance(self.allocator, OracleAllocator) and self.allocator.thompson_sampling:
+        if not isinstance(self.allocator, OracleAllocator):
             estim_CTRs_MAP = self.allocator.estimate_CTR(context, sample=False)
             return best_item, estim_CTRs_MAP[best_item]
 
@@ -78,10 +81,10 @@ class Agent:
             context =context[:self.context_dim]
 
         if self.should_explore():
-            bid, variance = value*self.rng.uniform(0.1, 1.5), 0.0
+            gamma = self.rng.uniform(0.1, 1.5)
             if not isinstance(self.bidder, TruthfulBidder):
-                self.bidder.gammas.append(bid)
-            variance = 0.0
+                self.bidder.gammas.append(gamma)
+            bid, variance = gamma*value, 0.0
         else:
             bid, variance = self.bidder.bid(value, context, estimated_CTR, self.clock)
 
@@ -136,6 +139,10 @@ class Agent:
 
         # Update bidding model with all data
         self.bidder.update(contexts, values, bids, prices, outcomes, estimated_CTRs, won_mask, utilities, self.name)
+
+        if self.memory!='inf' and len(self.logs)>self.memory:
+            self.logs = self.logs[-self.memory:]
+            self.bidder.gammas = self.bidder.gammas[-self.memory:]
 
     def get_allocation_regret(self):
         ''' How much value am I missing out on due to suboptimal allocation? '''
