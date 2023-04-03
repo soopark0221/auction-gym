@@ -45,7 +45,7 @@ class EmpiricalShadedBidder(Bidder):
         self.gammas = []
         super(EmpiricalShadedBidder, self).__init__(rng)
 
-    def bid(self, value, context, estimated_CTR):
+    def bid(self, value, context, estimated_CTR, clock):
         # Compute the bid as expected value
         bid = value * estimated_CTR
         # Sample the shade factor gamma
@@ -651,7 +651,7 @@ class ValueSamplingBidder(Bidder):
     def __init__(self, rng, gamma_mu, gamma_sigma, context_dim, method, epsilon=0.1, noise=0.02, prior_var=1.0):
         self.gamma_mu = gamma_mu
         self.gamma_sigma = gamma_sigma
-        self.context_dim = context_dim + 1
+        self.context_dim = context_dim
         assert method in ['Epsilon-greedy', 'Gaussian Noise', 'Bayes by Backprop', 'MC Dropout',
                           'NoisyNet']
         self.method = method
@@ -676,7 +676,7 @@ class ValueSamplingBidder(Bidder):
         self.model_initialised = False
         super(ValueSamplingBidder, self).__init__(rng)
 
-    def bid(self, value, context, estimated_CTR):
+    def bid(self, value, context, estimated_CTR, clock):
         # Compute the bid as expected value
         bid = value * estimated_CTR
         if not self.model_initialised:
@@ -712,7 +712,8 @@ class ValueSamplingBidder(Bidder):
         self.gammas.append(gamma)
         return bid, 0.0
 
-    def update(self, contexts, values, bids, prices, outcomes, estimated_CTRs, won_mask, iteration, plot, figsize, fontsize, name):
+    def update(self, contexts, values, bids, prices, outcomes, estimated_CTRs, won_mask, utilities, name):
+
         # FALLBACK: if you lost every auction you participated in, your model collapsed
         # Revert to not shading for 1 round, to collect data with informational value
         if not won_mask.astype(np.uint8).sum():
