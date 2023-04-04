@@ -118,6 +118,11 @@ class BayesianNeuralRegression(nn.Module):
     def loss(self, predictions, labels, N):
         kl_div = self.linear1.KL_div(self.prior_var) + self.linear2.KL_div(self.prior_var)
         return self.criterion(predictions, labels) + kl_div / N
+    
+    def get_uncertainty(self):
+        uncertainties = [self.linear1.get_uncertainty(),
+                         self.linear2.get_uncertainty()]
+        return np.concatenate(uncertainties)
 
 class NeuralRegression(nn.Module):
     def __init__(self, n_dim, n_items):
@@ -165,7 +170,7 @@ class NeuralWinRateEstimator(nn.Module):
     def __init__(self, context_dim):
         super(NeuralWinRateEstimator, self).__init__()
         self.ffn = nn.Sequential(*[
-            nn.Linear(context_dim+3,16),
+            nn.Linear(context_dim+1,16),
             nn.ReLU(),
             nn.Linear(16,1)]
             )
@@ -724,7 +729,7 @@ class DeterministicPolicy(nn.Module):
         super().__init__()
 
         self.ffn = nn.Sequential(*[
-            nn.Linear(context_dim+2, 16),
+            nn.Linear(context_dim+1, 16),
             nn.ReLU(),
             nn.Linear(16, 1),
             nn.Softplus()
@@ -766,17 +771,17 @@ class DeterministicPolicy(nn.Module):
     def forward(self, x):
         return torch.clip(self.ffn(x), 0.1, 1.5)
     
-    def loss(self, winrate_model, context, value, price):
-        gamma_pred = self(context).reshape(-1,1)
-        winrate = winrate_model(torch.cat([context, gamma_pred], dim=1))
-        utility = winrate * (value - price * gamma_pred)
+    def loss(self, winrate_model, X, V):
+        gamma_pred = self(torch.cat([X, V], dim=1)).reshape(-1,1)
+        winrate = winrate_model(torch.cat([X, V*gamma_pred], dim=1))
+        utility = winrate * V * (1 - gamma_pred)
         return -torch.mean(utility)
 
 class BayesianDeterministicPolicy(nn.Module):
     def __init__(self, context_dim, prior_var=None):
         super().__init__()
 
-        self.linear1 = BayesianLinear(context_dim+2, 16)
+        self.linear1 = BayesianLinear(context_dim+1, 16)
         self.linear2 = BayesianLinear(16, 1)
         self.eval()
 
@@ -793,7 +798,7 @@ class BayesianDeterministicPolicy(nn.Module):
         losses = []
         best_epoch, best_loss = -1, np.inf
         N = context.size()[0]
-        B = min(4096, N)
+        B = min(8192, N)
         batch_num = int(N/B)
 
         for epoch in tqdm(range(int(epochs)), desc=f'Initialising Policy'):
@@ -826,10 +831,10 @@ class BayesianDeterministicPolicy(nn.Module):
         x = torch.relu(self.linear1(x, sampling))
         return torch.clip(F.softplus(self.linear2(x, sampling)), 0.1, 1.5)
     
-    def loss(self, winrate_model, context, value, price, N=None):
-        gamma_pred = self(context, True).reshape(-1,1)
-        winrate = winrate_model(torch.cat([context, gamma_pred], dim=1))
-        utility = winrate * (value - price * gamma_pred)
+    def loss(self, winrate_model, X, V, N=None):
+        gamma_pred = self(torch.cat([X, V], dim=1), True).reshape(-1,1)
+        winrate = winrate_model(torch.cat([X, V*gamma_pred], dim=1))
+        utility = winrate * V * (1 - gamma_pred)
         if self.prior_var is None:
             return -torch.mean(utility)
         else:

@@ -112,7 +112,7 @@ def simulation_run(run):
                 agent2CTR_RMSE[agent.name].append(agent.get_CTR_RMSE())
                 agent2CTR_bias[agent.name].append(agent.get_CTR_bias())
 
-                agent2bidding_var[agent.name].append(agent.get_bidding_var())
+                # agent2bidding_var[agent.name].append(agent.get_bidding_var())
                 agent2uncertainty[agent.name].append(agent.get_uncertainty())
                 agent2winning_prob[agent.name].append(agent.get_winning_prob())
                 agent2CTR[agent.name].append(agent.get_CTRs())
@@ -130,7 +130,7 @@ def simulation_run(run):
             auction.clear_revenue()
     for agent in auction.agents:
         if agent.name.rfind('Competitor')<0:
-            for i in range(1):
+            for i in range(2):
                 context = auction.generate_context()
                 obs_context = context[:obs_context_dim]
                 if isinstance(agent.allocator, OracleAllocator):
@@ -141,9 +141,7 @@ def simulation_run(run):
                 gamma = np.linspace(0.1, 1.5, 128).reshape(-1,1)
                 x = np.concatenate([
                     np.tile(obs_context, (128, 1)),
-                    np.tile(estimated_CTR, (128,1)),
-                    np.tile(value, (128,1)),
-                    gamma
+                    np.tile(estimated_CTR*value, (128,1))*gamma
                 ], axis=1)
                 x = torch.Tensor(x).to(agent.bidder.device)
                 y = agent.bidder.winrate_model(x).numpy(force=True).reshape(-1,1)
@@ -203,7 +201,7 @@ if __name__ == '__main__':
     run2agent2CTR_bias = {}
     run2agent2gamma = {}
 
-    run2agent2bidding_var = {}
+    # run2agent2bidding_var = {}
     run2agent2uncertainty = {}
     run2agent2winning_prob = {}
     run2agent2CTR = {}
@@ -232,7 +230,7 @@ if __name__ == '__main__':
         agent2CTR_bias = defaultdict(list)
         agent2gamma = defaultdict(list)
 
-        agent2bidding_var = defaultdict(list)
+        # agent2bidding_var = defaultdict(list)
         agent2uncertainty = defaultdict(list)
         agent2winning_prob = defaultdict(list)
         agent2CTR = defaultdict(list)
@@ -257,7 +255,7 @@ if __name__ == '__main__':
         run2agent2CTR_bias[run] = agent2CTR_bias
         run2agent2gamma[run] = agent2gamma
 
-        run2agent2bidding_var[run] = agent2bidding_var
+        # run2agent2bidding_var[run] = agent2bidding_var
         run2agent2uncertainty[run] = agent2uncertainty
         run2agent2winning_prob[run] = agent2winning_prob
         run2agent2CTR[run] = agent2CTR
@@ -277,10 +275,10 @@ if __name__ == '__main__':
         df_rows = {'Run': [], 'Agent': [], 'Step': [], measure_name: []}
         for run, agent2measure in run2agent2measure.items():
             for agent, measures in agent2measure.items():
-                for iteration, measure in enumerate(measures):
+                for step, measure in enumerate(measures):
                     df_rows['Run'].append(run)
                     df_rows['Agent'].append(agent)
-                    df_rows['Step'].append(iteration)
+                    df_rows['Step'].append(step)
                     df_rows[measure_name].append(measure)
         return pd.DataFrame(df_rows)
     
@@ -288,11 +286,11 @@ if __name__ == '__main__':
         df_rows = {'Run': [], 'Agent': [], 'Step': [], 'Parameter':[], measure_name: []}
         for run, agent2measure in run2agent2vector_measure.items():
             for agent, vectors in agent2measure.items():
-                for iteration, vector in enumerate(vectors):
+                for step, vector in enumerate(vectors):
                     for index, measure in enumerate(vector):
                         df_rows['Run'].append(run)
                         df_rows['Agent'].append(agent)
-                        df_rows['Step'].append(iteration)
+                        df_rows['Step'].append(step)
                         df_rows['Parameter'].append(index)
                         df_rows[measure_name].append(measure)
         return pd.DataFrame(df_rows)
@@ -372,7 +370,6 @@ if __name__ == '__main__':
         plt.legend(loc='lower right', fontsize=FONTSIZE, ncol=3)
         plt.tight_layout()
         plt.savefig(f"{output_dir}/{measure_name.replace(' ', '_')}.png", bbox_inches='tight')
-        # plt.show()
         return df
     
     def plot_critic_estimation(run2agent2critic_estim):
@@ -420,9 +417,14 @@ if __name__ == '__main__':
     plot_measure_per_agent(run2agent2CTR_RMSE, 'CTR RMSE', log_y=True)
     plot_measure_per_agent(run2agent2CTR_bias, 'CTR Bias', optimal=1.0) #, yrange=(.5, 5.0))
 
-    bidding_var_df = plot_measure_per_agent(run2agent2bidding_var, 'Variance of Policy')
+    # bidding_var_df = plot_measure_per_agent(run2agent2bidding_var, 'Variance of Policy')
+    # bidding_var_df.to_csv(f'{output_dir}/bidding_variance.csv', index=False)
+    # try:
+    #     uncertainty_df = plot_vector_measure_per_agent(run2agent2uncertainty, 'Uncertainty in Parameters')
+    #     uncertainty_df.to_csv(f'{output_dir}/uncertainty.csv', index=False)
+    # except:
+    #     pass
     uncertainty_df = plot_vector_measure_per_agent(run2agent2uncertainty, 'Uncertainty in Parameters')
-    bidding_var_df.to_csv(f'{output_dir}/bidding_variance.csv', index=False)
     uncertainty_df.to_csv(f'{output_dir}/uncertainty.csv', index=False)
 
     winning_prob_df = plot_measure_per_agent(run2agent2winning_prob, 'Probability of winning')

@@ -97,7 +97,7 @@ class NeuralAllocator(Allocator):
         optimizer = torch.optim.Adam(self.response_model.parameters(), lr=lr)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.5)
 
-        B = min(4096, N)
+        B = min(8192, N)
         batch_num = int(N/B)
 
         X, A, y = torch.Tensor(X).to(self.device), torch.LongTensor(A).to(self.device), torch.Tensor(y).to(self.device)
@@ -127,7 +127,12 @@ class NeuralAllocator(Allocator):
             return self.response_model(torch.from_numpy(context.astype(np.float32)).to(self.device)).numpy(force=True)
         elif self.mode=='Bayes by Backprop':
             return self.response_model(torch.from_numpy(context.astype(np.float32)).to(self.device), sample=sample).numpy(force=True)
-
+    
+    def get_uncertainty(self):
+        if self.mode=='Bayes by Backprop':
+            return self.response_model.get_uncertainty()
+        else:
+            return np.array([0])
 
 class OracleAllocator(Allocator):
     """ An allocator that acts based on the true P(click)"""

@@ -171,10 +171,10 @@ class Agent:
     def get_uncertainty(self):
         return self.bidder.get_uncertainty()
     
-    def get_bidding_var(self):
-        var = np.array(self.bidding_variance)
-        self.bidding_variance = []
-        return np.sqrt(np.sum(var**2)/var.shape[0])
+    # def get_bidding_var(self):
+    #     var = np.array(self.bidding_variance)
+    #     self.bidding_variance = []
+    #     return np.sqrt(np.sum(var**2)/var.shape[0])
     
     def move_index(self):
         self.record_index = len(self.logs)

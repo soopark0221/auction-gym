@@ -1077,7 +1077,7 @@ class DDPGBidder(Bidder):
         else:
             # Option 2:
             # Sample from the contextual bandit
-            x = torch.Tensor(np.concatenate([context, np.array(estimated_CTR).reshape(1), np.array(value).reshape(1)])).to(self.device)
+            x = torch.Tensor(np.concatenate([context, np.array(estimated_CTR*value).reshape(1)])).to(self.device)
             with torch.no_grad():
                 if self.exploration_method=='SWAG':
                     self.SWAG.sample()
@@ -1097,14 +1097,11 @@ class DDPGBidder(Bidder):
         # 1. TRAIN UTILITY ESTIMATOR #
         ##############################
         gammas_numpy = np.array(self.gammas)
-        X = np.hstack((contexts.reshape(-1, self.context_dim), estimated_CTRs.reshape(-1,1), values.reshape(-1,1), gammas_numpy.reshape(-1, 1)))
+        X = np.hstack((contexts.reshape(-1, self.context_dim), (estimated_CTRs*values*gammas_numpy).reshape(-1, 1)))
         N = X.shape[0]
 
         X_aug_neg = X.copy()
         X_aug_neg[:, -1] = 0.0
-
-        X_aug_pos = X[won_mask].copy()
-        X_aug_pos[:, -1] = np.maximum(X_aug_pos[:, -1], 1.0)
 
         X = torch.Tensor(np.vstack((X, X_aug_neg))).to(self.device)
 
@@ -1148,13 +1145,13 @@ class DDPGBidder(Bidder):
         # 2. TRAIN POLICY #
         ##############################
         gammas = torch.Tensor(self.gammas).to(self.device)
-        X = torch.Tensor(np.hstack((contexts.reshape(-1,self.context_dim), estimated_CTRs.reshape(-1,1), values.reshape(-1,1)))).to(self.device)
+        X = torch.Tensor(contexts.reshape(-1,self.context_dim)).to(self.device)
+        R = torch.Tensor((outcomes*values).reshape(-1,1)).to(self.device)
+        V = torch.Tensor((estimated_CTRs*values).reshape(-1,1)).to(self.device)
         N = X.size()[0]
-        V = torch.Tensor(values).to(self.device)
-        P = torch.Tensor(prices).to(self.device)
         
         if not self.model_initialised:
-            self.bidding_policy.initialise_policy(X, gammas)
+            self.bidding_policy.initialise_policy(torch.cat([X, V], dim=1), gammas)
 
         # Fit the model
         self.bidding_policy.train()
@@ -1174,14 +1171,14 @@ class DDPGBidder(Bidder):
 
             for i in range(batch_num):
                 X_mini = X[i:i+B]
+                # R_mini = R[i:i+B]
                 V_mini = V[i:i+B]
-                P_mini = P[i:i+B]
                 optimizer.zero_grad()
 
                 if self.exploration_method=='Bayes by Backprop':
-                    loss = self.bidding_policy.loss(self.winrate_model, X_mini, V_mini, P_mini, N)
+                    loss = self.bidding_policy.loss(self.winrate_model, X_mini, V_mini, N)
                 else:
-                    loss = self.bidding_policy.loss(self.winrate_model, X_mini, V_mini, P_mini)
+                    loss = self.bidding_policy.loss(self.winrate_model, X_mini, V_mini)
                 loss.backward()
                 optimizer.step()
                 epoch_loss += loss.item()
