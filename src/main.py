@@ -15,8 +15,8 @@ import pickle
 from Agent import Agent
 from AuctionAllocation import * # FirstPrice, SecondPrice
 from Auction import Auction
-from Bidder import *  # EmpiricalShadedBidder, TruthfulBidder
-from BidderAllocation import *  #  LogisticTSAllocator, OracleAllocator
+from Bidder import *  
+from BidderAllocation import * 
 
 
 def parse_kwargs(kwargs):

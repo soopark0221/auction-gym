@@ -61,9 +61,9 @@ class BayesianLinear(nn.Module):
 # from "An Empirical Evaluation of Thompson Sampling" by Olivier Chapelle & Lihong Li
 # https://proceedings.neurips.cc/paper/2011/file/e53a0a2978c28872a4505bdb51db06dc-Paper.pdf
 
-class PyTorchLogisticRegression(torch.nn.Module):
+class DiagLogisticRegression(torch.nn.Module):
     def __init__(self, n_dim, n_items):
-        super(PyTorchLogisticRegression, self).__init__()
+        super().__init__()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.m = torch.nn.Parameter(torch.Tensor(n_items, n_dim))
         torch.nn.init.normal_(self.m, mean=0.0, std=1.0)
@@ -84,7 +84,7 @@ class PyTorchLogisticRegression(torch.nn.Module):
         return torch.sigmoid((x * self.m[a]).sum(axis=1))
 
     def loss(self, predictions, labels):
-        prior_dist = self.q[:, :-1] * (self.prev_iter_m[:, :-1] - self.m[:, :-1])**2
+        prior_dist = self.q * (self.prev_iter_m - self.m)**2
         return 0.5 * prior_dist.sum() + self.logloss(predictions, labels)
 
     def laplace_approx(self, X, item):
@@ -93,7 +93,130 @@ class PyTorchLogisticRegression(torch.nn.Module):
 
     def update_prior(self):
         self.prev_iter_m = self.m.detach().clone()
+    
+    def get_uncertainty(self):
+        return self.q.numpy(force=True).reshape(-1)
 
+class LinearRegression:
+    def __init__(self,context_dim, num_items, mode, c=2.):
+        super().__init__()
+        self.mode = mode # UCB or TS    
+        self.K = num_items
+        self.d = context_dim
+
+        self.N = np.zeros((self.K,), dtype=int)
+        self.lambda0 = 1.0    # regularization constant
+        self.c = c
+
+        self.yt_y = np.zeros((self.K,))
+        self.Xt_y = np.zeros((self.K, self.d))
+        self.Xt_X = np.zeros((self.K, self.d, self.d))
+        temp = [np.identity(self.d)/self.lambda0 for _ in range(self.K)]
+        self.S = np.stack(temp)
+        self.m = np.zeros((self.K, self.d))
+
+    def update(self, contexts, items, outcomes):
+        for k in range(self.K):
+            mask = items==k
+            X = contexts[mask][self.N[k]:].reshape(-1,self.d)
+            y = outcomes[mask][self.N[k]:].reshape(-1)
+            if y.shape[0]>0:
+                self.N[k] += y.shape[0]
+
+                self.yt_y[k] += np.dot(y,y)
+                self.Xt_y[k,:] += np.matmul(X.T, y).reshape(-1)
+                self.Xt_X[k,:,:] += np.matmul(X.T, X)
+
+                self.S[k,:,:] = np.linalg.inv(self.Xt_X[k,:,:] + self.lambda0*np.identity(self.d))
+                self.m[k,:] = self.S[k,:,:] @ self.Xt_y[k,:]
+
+    def estimate_CTR(self, context, UCB=False, TS=False):
+        context = context.reshape(-1)
+        if UCB:
+            return self.m @ context + self.c * np.sqrt(np.tensordot(context.T,np.tensordot(self.S, context, axes=([2],[0])), axes=([0],[1])))
+        else:
+            return self.m @ context
+
+    def get_uncertainty(self):
+        eigvals = [np.linalg.eigvals(self.S[k,:,:]).reshape(-1) for k in range(self.K)]
+        return np.concatenate(eigvals)
+
+class LogisticRegression(nn.Module):
+    def __init__(self, context_dim, num_items, mode, c=1.0):
+        super().__init__()
+        self.mode = mode
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.K = num_items
+        self.d = context_dim
+        self.c = c
+
+        self.m = nn.Parameter(torch.Tensor(self.K, self.d))
+        nn.init.kaiming_uniform_(self.m)
+
+        self.S0_inv = torch.Tensor(np.identity(self.d)).to(self.device)
+        temp = [np.identity(self.d) for _ in range(self.K)]
+        self.S_inv = np.stack(temp)
+        self.S = torch.Tensor(self.S_inv.copy()).to(self.device)
+
+        self.BCE = torch.nn.BCELoss(reduction='sum')
+    
+    def forward(self, X, A):
+        return torch.sigmoid(torch.sum(X * self.m[A], dim=1))
+    
+    def update(self, contexts, items, outcomes, name):
+        X = torch.Tensor(contexts).to(self.device)
+        A = torch.LongTensor(items).to(self.device)
+        y = torch.Tensor(outcomes).to(self.device)
+
+        epochs = 2000
+        lr = 1e-3
+        optimizer = torch.optim.Adam(self.parameters(), lr=lr)
+
+        losses = []
+        for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
+                optimizer.zero_grad()
+                loss = self.loss(X, A, y, self.S0_inv)
+                loss.backward()
+                optimizer.step()
+                losses.append(loss.item())
+                if epoch > 500 and np.abs(losses[-100] - losses[-1]) < 1e-6:
+                    print(f'Stopping at Epoch {epoch}')
+                    break
+        
+        y = self(X, A).numpy(force=True)
+        X = contexts.reshape(-1,self.d)
+        for k in range(self.K):
+            mask = items==k
+            y_ = y[mask]
+            X_ = X[mask,:]
+            N = y_.shape[0]
+            y_ = y_ * (1 - y_)
+            S_inv = self.S0_inv.numpy(force=True)
+            for n in range(N):
+                S_inv += y_[n] * X_[n,:].reshape(-1,1) @ X_[n,:].reshape(1,-1)
+            self.S_inv[k,:,:] = S_inv
+            self.S[k,:,:] = torch.Tensor(np.linalg.inv(S_inv)).to(self.device)
+    
+    def loss(self, X, A, y, S0_inv):
+        y_pred = self(X, A)
+        loss = self.BCE(y_pred, y)
+        for k in range(self.K):
+            loss += torch.sum(self.m[k,:] @ S0_inv @ self.m[k,:]/2)
+        return loss
+    
+    def estimate_CTR(self, context, UCB=False, TS=False):
+        X = torch.Tensor(context.reshape(-1)).to(self.device)
+        if UCB:
+            U = torch.sigmoid(torch.matmul(self.m, X) + self.c * torch.sqrt(torch.tensordot(X.T,torch.tensordot(self.S, X, dims=([2],[0])), dims=([0],[1]))))
+            return U.numpy(force=True)
+        else:
+            return torch.sigmoid(torch.matmul(self.m, X)).numpy(force=True)
+    
+    def get_uncertainty(self):
+        S_ = self.S.numpy(force=True)
+        eigvals = [np.linalg.eigvals(S_[k,:,:]).reshape(-1) for k in range(self.K)]
+        return np.concatenate(eigvals)
+       
 class BayesianNeuralRegression(nn.Module):
     def __init__(self, n_dim, n_items, prior_var):
         super().__init__()
@@ -130,23 +253,20 @@ class NeuralRegression(nn.Module):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.n_dim = n_dim
         self.n_items = n_items
-        self.ffn = nn.Sequential(*[
-            nn.Linear(self.n_dim, self.n_dim),
-            nn.ReLU(),
-            nn.Linear(self.n_dim, self.n_items),
-            nn.Sigmoid()
-        ])
-        self.criterion = nn.BCELoss()
+        self.feature = nn.Linear(self.n_dim, 16)
+        self.head = nn.Linear(16, self.n_items)
+        self.BCE = nn.BCELoss()
         self.eval()
 
     def forward(self, x):
-        return self.ffn(x)
+        x = torch.relu(self.feature(x))
+        return torch.sigmoid(self.head(x))
 
     def predict_item(self, x, a):
         return self(x)[range(a.size(0)),a]
 
     def loss(self, predictions, labels):
-        return self.criterion(predictions, labels)
+        return self.BCE(predictions, labels)
 
 
 class PyTorchWinRateEstimator(torch.nn.Module):
@@ -168,13 +288,13 @@ class PyTorchWinRateEstimator(torch.nn.Module):
     
 class NeuralWinRateEstimator(nn.Module):
     def __init__(self, context_dim):
-        super(NeuralWinRateEstimator, self).__init__()
+        super().__init__()
         self.ffn = nn.Sequential(*[
             nn.Linear(context_dim+1,16),
             nn.ReLU(),
             nn.Linear(16,1)]
             )
-        self.metric = nn.BCEWithLogitsLoss()
+        self.BCE = nn.BCEWithLogitsLoss()
         self.eval()
 
     def forward(self, x, sample=False):
@@ -182,7 +302,7 @@ class NeuralWinRateEstimator(nn.Module):
     
     def loss(self, x, y):
         logits = self.ffn(x)
-        return self.metric(logits, y)
+        return self.BCE(logits, y)
     
 class BBBWinRateEstimator(nn.Module):
     def __init__(self, context_dim):
@@ -252,168 +372,6 @@ class NoisyNetWinRateEstimator(nn.Module):
                          self.linear2.get_uncertainty()]
         return np.concatenate(uncertainties)
 
-
-class BidShadingPolicy(torch.nn.Module):
-    def __init__(self, context_dim):
-        super(BidShadingPolicy, self).__init__()
-        # Input: context, P(click), value
-        # Output: mu, sigma for Gaussian bid shading distribution
-        # Learnt to maximise E[P(win|gamma)*(value - price)] when gamma ~ N(mu, sigma)
-        self.shared_linear = torch.nn.Linear(context_dim + 3, 2, bias=True)
-
-        self.mu_linear_hidden = torch.nn.Linear(2, 2)
-        self.mu_linear_out = torch.nn.Linear(2, 1)
-
-        self.sigma_linear_hidden = torch.nn.Linear(2, 2)
-        self.sigma_linear_out = torch.nn.Linear(2, 1)
-        self.eval()
-
-        self.min_sigma = 1e-2
-
-    def forward(self, x):
-        x = self.shared_linear(x)
-        mu = torch.nn.Softplus()(self.mu_linear_out(torch.nn.Softplus()(x)))
-        sigma = torch.nn.Softplus()(self.sigma_linear_out(torch.nn.Softplus()(x))) + self.min_sigma
-        dist = torch.distributions.normal.Normal(mu, sigma)
-        sampled_value = dist.rsample()
-        propensity = torch.exp(dist.log_prob(sampled_value))
-        sampled_value = torch.clip(sampled_value, min=0.0, max=1.0)
-        return sampled_value, propensity
-
-
-class BidShadingContextualBandit(torch.nn.Module):
-    def __init__(self, loss, context_dim):
-        super(BidShadingContextualBandit, self).__init__()
-
-        self.shared_linear = torch.nn.Linear(context_dim+3, 2, bias=True)
-
-        self.mu_linear_out = torch.nn.Linear(2, 1)
-
-        self.sigma_linear_out = torch.nn.Linear(2, 1)
-        self.eval()
-
-        self.min_sigma = 1e-2
-
-        self.loss_name = loss
-
-        self.model_initialised = False
-
-    def initialise_policy(self, observed_contexts, observed_gammas):
-        # The first time, train the policy to imitate the logging policy
-        self.train()
-        epochs = 10000
-        lr = 1e-3
-        optimizer = torch.optim.Adam(self.parameters(), lr=lr, weight_decay=1e-4, amsgrad=True)
-        criterion = torch.nn.MSELoss()
-        losses = []
-        best_epoch, best_loss = -1, np.inf
-        batch_size = 128
-        batch_num = int(8192/128)
-
-        for epoch in tqdm(range(int(epochs)), desc=f'Initialising Policy'):
-            epoch_loss = 0
-            for i in range(batch_num):
-                contexts = observed_contexts[i:i+batch_num]
-                gammas = observed_gammas[i:i+batch_num]
-                optimizer.zero_grad()
-                predicted_mu_gammas = torch.nn.Softplus()(self.mu_linear_out(torch.nn.Softplus()(self.shared_linear(contexts))))
-                predicted_sigma_gammas = torch.nn.Softplus()(self.sigma_linear_out(torch.nn.Softplus()(self.shared_linear(contexts))))
-                loss = criterion(predicted_mu_gammas.squeeze(), observed_gammas)/batch_num + criterion(predicted_sigma_gammas.squeeze(), torch.ones_like(gammas) * .05)/batch_num
-                loss.backward()  # Computes the gradient of the given tensor w.r.t. the weights/bias
-                optimizer.step()  # Updates weights and biases with the optimizer (SGD)
-                epoch_loss += loss.item()
-            losses.append(epoch_loss)
-            if (best_loss - losses[-1]) > 1e-6:
-                best_epoch = epoch
-                best_loss = losses[-1]
-            elif epoch - best_epoch > 100:
-                print(f'Stopping at Epoch {epoch}')
-                break
-
-        # fig, ax = plt.subplots()
-        # plt.title(f'Initialising policy')
-        # plt.plot(losses, label=r'Loss')
-        # plt.ylabel('MSE with logging policy')
-        # plt.legend()
-        # fig.set_tight_layout(True)
-        #plt.show()
-
-        # print('Predicted mu Gammas: ', predicted_mu_gammas.min(), predicted_mu_gammas.max(), predicted_mu_gammas.mean())
-        # print('Predicted sigma Gammas: ', predicted_sigma_gammas.min(), predicted_sigma_gammas.max(), predicted_sigma_gammas.mean())
-
-    def forward(self, x):
-        x = self.shared_linear(x)
-        dist = torch.distributions.normal.Normal(
-            torch.nn.Softplus()(self.mu_linear_out(torch.nn.Softplus()(x))),
-            torch.nn.Softplus()(self.sigma_linear_out(torch.nn.Softplus()(x))) + self.min_sigma
-        )
-        sampled_value = dist.rsample()
-        propensity = torch.exp(dist.log_prob(sampled_value))
-        sampled_value = torch.clip(sampled_value, min=0.0, max=1.0)
-        return sampled_value, propensity
-
-    def normal_pdf(self, x, gamma):
-        # Get distribution over bid shading factors
-        x = self.shared_linear(x)
-        mu = torch.nn.Softplus()(self.mu_linear_out(torch.nn.Softplus()(x)))
-        sigma = torch.nn.Softplus()(self.sigma_linear_out(torch.nn.Softplus()(x))) + self.min_sigma
-        mu = mu.squeeze()
-        sigma = sigma.squeeze()
-        # Compute the density for gamma under a Gaussian centered at mu -- prevent overflow
-        return mu, sigma, torch.clip(torch.exp(-((mu - gamma) / sigma)**2/2) / (sigma * np.sqrt(2 * np.pi)), min=1e-30)
-
-    def loss(self, observed_context, observed_gamma, logging_pp, utility, utility_estimates=None, winrate_model=None, KL_weight=5e-2, importance_weight_clipping_eps=np.inf):
-
-        mean_gamma_target, sigma_gamma_target, target_pp = self.normal_pdf(observed_context, observed_gamma)
-
-        # If not initialised, do a single round of on-policy REINFORCE
-        # The issue is that without proper initialisation, propensities vanish
-        if (self.loss_name == 'REINFORCE'): # or (not self.model_initialised)
-            return (-target_pp * utility).mean()
-
-        elif self.loss_name == 'REINFORCE_offpolicy':
-            importance_weights = target_pp / logging_pp
-            return (-importance_weights * utility).mean()
-
-        elif self.loss_name == 'TRPO':
-            # https://arxiv.org/abs/1502.05477
-            importance_weights = target_pp / logging_pp
-            expected_utility = torch.mean(importance_weights * utility)
-            KLdiv = (sigma_gamma_target**2 + (mean_gamma_target - observed_gamma)**2) / (2 * sigma_gamma_target**2) - 0.5
-            # Simpler proxy for KL divergence
-            # KLdiv = (mean_gamma_target - observed_gamma)**2
-            return - expected_utility + KLdiv.mean() * KL_weight
-
-        elif self.loss_name == 'PPO':
-            # https://arxiv.org/pdf/1707.06347.pdf
-            # NOTE: clipping is actually proposed in an additive manner
-            importance_weights = target_pp / logging_pp
-            clipped_importance_weights = torch.clip(importance_weights,
-                                                    min=1.0/importance_weight_clipping_eps,
-                                                    max=importance_weight_clipping_eps)
-            return - torch.min(importance_weights * utility, clipped_importance_weights * utility).mean()
-
-        elif self.loss_name == 'Doubly Robust':
-            importance_weights = target_pp / logging_pp
-
-            DR_IPS = (utility - utility_estimates) * torch.clip(importance_weights, min=1.0/importance_weight_clipping_eps, max=importance_weight_clipping_eps)
-
-            dist = torch.distributions.normal.Normal(
-                mean_gamma_target,
-                sigma_gamma_target
-            )
-
-            sampled_gamma = torch.clip(dist.rsample(), min=0.0, max=1.0)
-            features_for_p_win = torch.hstack((observed_context, sampled_gamma.reshape(-1,1)))
-
-            W = winrate_model(features_for_p_win).squeeze()
-
-            V = observed_context[:,0].squeeze() * observed_context[:,1].squeeze()
-            P = observed_context[:,0].squeeze() * observed_context[:,1].squeeze() * sampled_gamma
-
-            DR_DM = W * (V - P)
-
-            return -(DR_IPS + DR_DM).mean()
 
 class BayesianStochasticPolicy(nn.Module):
     def __init__(self, context_dim, loss_type, use_WIS=True):

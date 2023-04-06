@@ -1,6 +1,6 @@
 import numpy as np
 
-from BidderAllocation import PyTorchLogisticRegressionAllocator, OracleAllocator, NeuralAllocator
+from BidderAllocation import *
 from Impression import ImpressionOpportunity
 from Models import sigmoid
 from Bidder import TruthfulBidder
@@ -54,19 +54,20 @@ class Agent:
 
     def select_item(self, context):
         # Estimate CTR for all items
-        estim_CTRs = self.allocator.estimate_CTR(context)
+        if not isinstance(self.allocator, OracleAllocator) and self.allocator.mode=='UCB':
+            estim_CTRs = self.allocator.estimate_CTR(context, UCB=True)
+        elif not isinstance(self.allocator, OracleAllocator) and self.allocator.mode=='TS':
+            estim_CTRs = self.allocator.estimate_CTR(context, TS=True)
+        else:
+            estim_CTRs = self.allocator.estimate_CTR(context)
         # Compute value if clicked
         estim_values = estim_CTRs * self.item_values
         # Pick the best item (according to TS)
         best_item = np.argmax(estim_values)
-        if isinstance(self.allocator, NeuralAllocator) and self.allocator.mode=='Epsilon-greedy':
+
+        if not isinstance(self.allocator, OracleAllocator) and self.allocator.mode=='Epsilon-greedy':
             if self.rng.uniform(0,1)<self.allocator.eps:
                 best_item = self.rng.choice(self.num_items, 1).item()
-
-        # If we do Thompson Sampling, don't propagate the noisy bid amount but bid using the MAP estimate
-        if not isinstance(self.allocator, OracleAllocator):
-            estim_CTRs_MAP = self.allocator.estimate_CTR(context, sample=False)
-            return best_item, estim_CTRs_MAP[best_item]
 
         return best_item, estim_CTRs[best_item]
 
@@ -87,6 +88,11 @@ class Agent:
             bid, variance = gamma*value, 0.0
         else:
             bid, variance = self.bidder.bid(value, context, estimated_CTR, self.clock)
+            if not isinstance(self.allocator, OracleAllocator) and self.allocator.mode=='UCB':
+                mean_CTR = self.allocator.estimate_CTR(context, UCB=False)
+                estimated_CTR = mean_CTR[best_item]
+            elif not isinstance(self.allocator, OracleAllocator) and self.allocator.mode=='TS':
+                estimated_CTR = self.allocator.estimate_CTR(context, TS=False)
 
         # Log what we know so far
         self.logs.append(ImpressionOpportunity(context=context,
@@ -169,7 +175,7 @@ class Agent:
         return np.mean(list((opp.estimated_CTR / opp.true_CTR) for opp in filter(lambda opp: opp.won, self.logs[self.record_index:])))
     
     def get_uncertainty(self):
-        return self.bidder.get_uncertainty()
+        return self.allocator.get_uncertainty()
     
     # def get_bidding_var(self):
     #     var = np.array(self.bidding_variance)
@@ -186,7 +192,7 @@ class Agent:
         return np.sum(list(opp.gross_utility for opp in self.logs[self.record_index:]))
 
     def get_gamma(self):
-        return np.array(list(opp.bid/opp.value for opp in self.logs[self.record_index:]))
+        return np.array(self.bidder.gammas[self.record_index:])
 
     def get_winning_prob(self):
         return np.mean(list(opp.won for opp in self.logs[self.record_index:]))
