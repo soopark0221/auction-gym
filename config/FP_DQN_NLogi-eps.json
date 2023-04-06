@@ -33,11 +33,11 @@
               "gamma_sigma": 0.5,
               "context_dim": 8,
               "exploration_method": "\"Gaussian Noise\"",
-              "noise": 0.05
+              "noise": 0.01
             }
       },
       "memory": "inf"
     }],
     "output_dir": "results/NLogi-eps/",
-    "network_architecture": "input-32-output"
+    "network_architecture": "input-16-output"
   }

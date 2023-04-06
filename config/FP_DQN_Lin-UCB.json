@@ -1,0 +1,43 @@
+{
+    "agents": [ {
+      "name": "Competitor-Truthful",
+      "num_copies": 4,
+      "num_items": 12,
+        "allocator": {
+          "type": "OracleAllocator",
+          "kwargs": {}
+        },
+        "bidder": {
+            "type": "TruthfulBidder",
+            "kwargs": {}
+      }
+    },
+    {
+      "name": "Linear-UCB",
+      "num_copies": 1,
+      "num_items": 12,
+        "allocator": {
+          "type": "LinearAllocator",
+          "kwargs": {
+            "context_dim": 8,
+            "num_items": 12,
+            "mode": "\"UCB\"",
+            "c": 5.0
+          }
+        },
+        "bidder": {
+            "type": "DQNBidder",
+            "kwargs": {
+              "lr": 1e-3,
+              "gamma_mu": 1.0,
+              "gamma_sigma": 0.5,
+              "context_dim": 8,
+              "exploration_method": "\"Gaussian Noise\"",
+              "noise": 0.05
+            }
+      },
+      "memory": "inf"
+    }],
+    "output_dir": "results/Linear-UCB/",
+    "network_architecture": "input-32-output"
+  }

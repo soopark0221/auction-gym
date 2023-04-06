@@ -739,17 +739,12 @@ class DQNBidder(Bidder):
 
         # Training config
         self.winrate_model.train()
-        epochs = 2000
+        epochs = 100
         optimizer = torch.optim.Adam(self.winrate_model.parameters(), lr=self.lr, weight_decay=1e-6, amsgrad=True)
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=100, min_lr=1e-7, factor=0.1, verbose=True)
-        losses = []
-        best_epoch, best_loss = -1, np.inf
         B = min(8192, N)
         batch_num = int(N/B)
 
-        for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
-            epoch_loss = 0
-
+        for epoch in range(int(epochs)):
             for i in range(batch_num):
                 X_mini = X[i:i+B]
                 y_mini = y[i:i+B]
@@ -763,18 +758,6 @@ class DQNBidder(Bidder):
                     loss = self.winrate_model.loss(X_mini, y_mini)
                 loss.backward()
                 optimizer.step()
-                epoch_loss += loss.item()
-                scheduler.step(loss)
-            losses.append(epoch_loss)
-
-            if (best_loss - losses[-1]) > 1e-6:
-                best_epoch = epoch
-                best_loss = losses[-1]
-            elif epoch - best_epoch > 500:
-                print(f'Stopping at Epoch {epoch}')
-                break
-
-        losses = np.array(losses)
         self.winrate_model.eval()
         self.model_initialised = True
 

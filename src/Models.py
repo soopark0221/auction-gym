@@ -98,8 +98,9 @@ class DiagLogisticRegression(torch.nn.Module):
         return self.q.numpy(force=True).reshape(-1)
 
 class LinearRegression:
-    def __init__(self,context_dim, num_items, mode, c=2.):
+    def __init__(self,context_dim, num_items, mode, rng, c=2.):
         super().__init__()
+        self.rng = rng
         self.mode = mode # UCB or TS    
         self.K = num_items
         self.d = context_dim
@@ -113,6 +114,7 @@ class LinearRegression:
         self.Xt_X = np.zeros((self.K, self.d, self.d))
         temp = [np.identity(self.d)/self.lambda0 for _ in range(self.K)]
         self.S = np.stack(temp)
+        self.sqrt_S = self.S.copy()
         self.m = np.zeros((self.K, self.d))
 
     def update(self, contexts, items, outcomes):
@@ -129,21 +131,28 @@ class LinearRegression:
 
                 self.S[k,:,:] = np.linalg.inv(self.Xt_X[k,:,:] + self.lambda0*np.identity(self.d))
                 self.m[k,:] = self.S[k,:,:] @ self.Xt_y[k,:]
+                D, V = np.linalg.eig(self.S[k,:,:])
+                D, V = D.real, V.real
+                self.sqrt_S[k,:,:] = V @ np.diag(np.sqrt(D))
 
     def estimate_CTR(self, context, UCB=False, TS=False):
         context = context.reshape(-1)
         if UCB:
             return self.m @ context + self.c * np.sqrt(np.tensordot(context.T,np.tensordot(self.S, context, axes=([2],[0])), axes=([0],[1])))
+        elif TS:
+            m = self.m.numpy(force=True) + self.sqrt_S @ self.rng.normal(0,1,self.d)
+            return m @ context
         else:
             return self.m @ context
 
     def get_uncertainty(self):
         eigvals = [np.linalg.eigvals(self.S[k,:,:]).reshape(-1) for k in range(self.K)]
-        return np.concatenate(eigvals)
+        return np.concatenate(eigvals).real
 
 class LogisticRegression(nn.Module):
-    def __init__(self, context_dim, num_items, mode, c=1.0):
+    def __init__(self, context_dim, num_items, mode, rng, c=1.0):
         super().__init__()
+        self.rng = rng
         self.mode = mode
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.K = num_items
@@ -156,6 +165,7 @@ class LogisticRegression(nn.Module):
         self.S0_inv = torch.Tensor(np.identity(self.d)).to(self.device)
         temp = [np.identity(self.d) for _ in range(self.K)]
         self.S_inv = np.stack(temp)
+        self.sqrt_S = self.S_inv.copy()
         self.S = torch.Tensor(self.S_inv.copy()).to(self.device)
 
         self.BCE = torch.nn.BCELoss(reduction='sum')
@@ -168,20 +178,17 @@ class LogisticRegression(nn.Module):
         A = torch.LongTensor(items).to(self.device)
         y = torch.Tensor(outcomes).to(self.device)
 
-        epochs = 2000
+        epochs = 100
         lr = 1e-3
         optimizer = torch.optim.Adam(self.parameters(), lr=lr)
 
         losses = []
-        for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
+        for epoch in range(int(epochs)):
                 optimizer.zero_grad()
                 loss = self.loss(X, A, y, self.S0_inv)
                 loss.backward()
                 optimizer.step()
                 losses.append(loss.item())
-                if epoch > 500 and np.abs(losses[-100] - losses[-1]) < 1e-6:
-                    print(f'Stopping at Epoch {epoch}')
-                    break
         
         y = self(X, A).numpy(force=True)
         X = contexts.reshape(-1,self.d)
@@ -195,8 +202,13 @@ class LogisticRegression(nn.Module):
             for n in range(N):
                 S_inv += y_[n] * X_[n,:].reshape(-1,1) @ X_[n,:].reshape(1,-1)
             self.S_inv[k,:,:] = S_inv
-            self.S[k,:,:] = torch.Tensor(np.linalg.inv(S_inv)).to(self.device)
-    
+
+            S = np.linalg.inv(S_inv)
+            D, V = np.linalg.eig(S)
+            D, V = D.real, V.real
+            self.sqrt_S[k,:,:] = V @ np.diag(np.sqrt(D))
+            self.S[k,:,:] = torch.Tensor(S).to(self.device)
+            
     def loss(self, X, A, y, S0_inv):
         y_pred = self(X, A)
         loss = self.BCE(y_pred, y)
@@ -209,13 +221,17 @@ class LogisticRegression(nn.Module):
         if UCB:
             U = torch.sigmoid(torch.matmul(self.m, X) + self.c * torch.sqrt(torch.tensordot(X.T,torch.tensordot(self.S, X, dims=([2],[0])), dims=([0],[1]))))
             return U.numpy(force=True)
+        elif TS:
+            m = self.m.numpy(force=True) + self.sqrt_S @ self.rng.normal(0,1,self.d)
+            return (1 + np.exp(m @ context))**(-1)
         else:
             return torch.sigmoid(torch.matmul(self.m, X)).numpy(force=True)
     
     def get_uncertainty(self):
         S_ = self.S.numpy(force=True)
         eigvals = [np.linalg.eigvals(S_[k,:,:]).reshape(-1) for k in range(self.K)]
-        return np.concatenate(eigvals)
+        S_ += 1e-4 * np.identity(self.d)
+        return np.concatenate(eigvals).real
        
 class BayesianNeuralRegression(nn.Module):
     def __init__(self, n_dim, n_items, prior_var):

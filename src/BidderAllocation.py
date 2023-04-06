@@ -82,63 +82,58 @@ class NeuralAllocator(Allocator):
     def __init__(self, rng, context_dim, num_items, mode, eps=0.1, prior_var=1.0):
         self.mode = mode # epsilon-greedy, BBB
         if self.mode=='Epsilon-greedy':
-            self.response_model = NeuralRegression(n_dim=context_dim, n_items=num_items)
+            self.net = NeuralRegression(n_dim=context_dim, n_items=num_items)
             self.eps = eps
         elif self.mode=='Bayes by Backprop':
-            self.response_model = BayesianNeuralRegression(n_dim=context_dim, n_items=num_items, prior_var=prior_var)
+            self.net = BayesianNeuralRegression(n_dim=context_dim, n_items=num_items, prior_var=prior_var)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.response_model.to(self.device)
+        self.net.to(self.device)
+        self.count = 0
         super().__init__(rng)
 
     def update(self, contexts, items, outcomes, name):
-        # Rename
-        X, A, y = contexts, items, outcomes
-        N = X.shape[0]
+        self.count += 1
 
-        if len(y) < 2:
-            return
+        if self.count%10==0:
+            X, A, y = contexts, items, outcomes
+            N = X.shape[0]
+            if N<10:
+                return
 
-        # Fit the model
-        self.response_model.train()
-        epochs = 2000
-        lr = 1e-3
-        optimizer = torch.optim.Adam(self.response_model.parameters(), lr=lr)
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.5)
+            self.net.train()
+            epochs = 100
+            lr = 1e-3
+            optimizer = torch.optim.Adam(self.net.parameters(), lr=lr)
 
-        B = min(8192, N)
-        batch_num = int(N/B)
+            B = min(8192, N)
+            batch_num = int(N/B)
 
-        X, A, y = torch.Tensor(X).to(self.device), torch.LongTensor(A).to(self.device), torch.Tensor(y).to(self.device)
-        losses = []
-        for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
-            for i in range(batch_num):
-                X_mini = X[i:i+B]
-                A_mini = A[i:i+B]
-                y_mini = y[i:i+B]
-                optimizer.zero_grad()
-                if self.mode=='Epsilon-greedy':
-                    loss = self.response_model.loss(self.response_model.predict_item(X_mini, A_mini).squeeze(), y_mini)
-                elif self.mode=='Bayes by Backprop':
-                    loss = self.response_model.loss(self.response_model.predict_item(X_mini, A_mini).squeeze(), y_mini, N)
-                loss.backward()
-                optimizer.step()
-                losses.append(loss.item())
-                scheduler.step(loss)
-
-            if epoch > 512 and np.abs(losses[-100] - losses[-1]) < 1e-6:
-                print(f'Stopping at Epoch {epoch}')
-                break
-        self.response_model.eval()
+            X, A, y = torch.Tensor(X).to(self.device), torch.LongTensor(A).to(self.device), torch.Tensor(y).to(self.device)
+            losses = []
+            for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
+                for i in range(batch_num):
+                    X_mini = X[i:i+B]
+                    A_mini = A[i:i+B]
+                    y_mini = y[i:i+B]
+                    optimizer.zero_grad()
+                    if self.mode=='Epsilon-greedy':
+                        loss = self.response_model.loss(self.response_model.predict_item(X_mini, A_mini).squeeze(), y_mini)
+                    elif self.mode=='Bayes by Backprop':
+                        loss = self.response_model.loss(self.response_model.predict_item(X_mini, A_mini).squeeze(), y_mini, N)
+                    loss.backward()
+                    optimizer.step()
+                    losses.append(loss.item())
+        self.net.eval()
 
     def estimate_CTR(self, context, sample=True):
         if self.mode=='Epsilon-greedy':
-            return self.response_model(torch.from_numpy(context.astype(np.float32)).to(self.device)).numpy(force=True)
+            return self.net(torch.from_numpy(context.astype(np.float32)).to(self.device)).numpy(force=True)
         elif self.mode=='Bayes by Backprop':
-            return self.response_model(torch.from_numpy(context.astype(np.float32)).to(self.device), sample=sample).numpy(force=True)
+            return self.net(torch.from_numpy(context.astype(np.float32)).to(self.device), sample=sample).numpy(force=True)
     
     def get_uncertainty(self):
         if self.mode=='Bayes by Backprop':
-            return self.response_model.get_uncertainty()
+            return self.net.get_uncertainty()
         else:
             return np.array([0])
     
@@ -174,7 +169,7 @@ class LogisticAllocator(Allocator):
         self.d = context_dim
         self.c = c
         self.eps = eps
-        self.model = LogisticRegression(self.d, self.K, self.c).to(self.device)
+        self.model = LogisticRegression(self.d, self.K, self.c, self.rng).to(self.device)
 
         temp = [np.identity(self.d) for _ in range(self.K)]
         self.S0_inv = torch.Tensor(np.identity(self.d)).to(self.device)
@@ -201,9 +196,9 @@ class NeuralLinearAllocator(Allocator):
 
         split = mode.split()
         if split[0]=='Linear':
-            self.model = LinearRegression(self.H, self.K, split[1]).to(self.device)
+            self.model = LinearRegression(self.H, self.K, split[1], self.rng).to(self.device)
         elif split[0]=='Logistic':
-            self.model = LogisticRegression(self.H, self.K, split[1]).to(self.device)
+            self.model = LogisticRegression(self.H, self.K, split[1], self.rng).to(self.device)
         self.mode = split[1]
 
         self.c = c
@@ -214,31 +209,29 @@ class NeuralLinearAllocator(Allocator):
     def update(self, contexts, items, outcomes, name):
         self.count += 1
 
-        X, A, y = torch.Tensor(contexts).to(self.device), torch.LongTensor(items).to(self.device), torch.Tensor(outcomes).to(self.device)
-        N = y.size(0)
+        if self.count%10==0:
+            X, A, y = torch.Tensor(contexts).to(self.device), torch.LongTensor(items).to(self.device), torch.Tensor(outcomes).to(self.device)
+            N = y.size(0)
 
-        self.net.train()
-        epochs = 2000
-        lr = 1e-3
-        optimizer = torch.optim.Adam(self.net.parameters(), lr=lr)
+            self.net.train()
+            epochs = 100
+            lr = 1e-3
+            optimizer = torch.optim.Adam(self.net.parameters(), lr=lr)
 
-        B = min(8192, N)
-        batch_num = int(N/B)
-        losses = []
-        for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
-            for i in range(batch_num):
-                X_mini = X[i:i+B]
-                A_mini = A[i:i+B]
-                y_mini = y[i:i+B]
-                optimizer.zero_grad()
-                loss = self.net.loss(self.net.predict_item(X_mini, A_mini).squeeze(), y_mini)
-                loss.backward()
-                optimizer.step()
-                losses.append(loss.item())
-
-            if epoch > 512 and np.abs(losses[-100] - losses[-1]) < 1e-6:
-                break
-        self.net.eval()
+            B = min(8192, N)
+            batch_num = int(N/B)
+            losses = []
+            for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
+                for i in range(batch_num):
+                    X_mini = X[i:i+B]
+                    A_mini = A[i:i+B]
+                    y_mini = y[i:i+B]
+                    optimizer.zero_grad()
+                    loss = self.net.loss(self.net.predict_item(X_mini, A_mini).squeeze(), y_mini)
+                    loss.backward()
+                    optimizer.step()
+                    losses.append(loss.item())
+            self.net.eval()
         
         F = self.net.feature(X).numpy(force=True)
         self.model.update(F, items, outcomes, name)
