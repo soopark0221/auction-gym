@@ -142,7 +142,7 @@ class LinearRegression:
         elif TS:
             m = self.m.numpy(force=True)
             for k in range(self.K):
-                m[k,:,:] += self.sqrt_S[k,:,:] @ self.rng.normal(0,1,self.d)
+                m[k,:] += self.sqrt_S[k,:,:] @ self.rng.normal(0,1,self.d)
             return m @ context
         else:
             return self.m @ context
@@ -226,7 +226,7 @@ class LogisticRegression(nn.Module):
         elif TS:
             m = self.m.numpy(force=True)
             for k in range(self.K):
-                m[k,:,:] += self.sqrt_S[k,:,:] @ self.rng.normal(0,1,self.d)
+                m[k,:] += self.sqrt_S[k,:,:] @ self.rng.normal(0,1,self.d)
             return (1 + np.exp(- m @ context))**(-1)
         else:
             return torch.sigmoid(torch.matmul(self.m, X)).numpy(force=True)
