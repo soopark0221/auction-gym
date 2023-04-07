@@ -101,7 +101,7 @@ class LinearRegression:
     def __init__(self,context_dim, num_items, mode, rng, c=2.):
         super().__init__()
         self.rng = rng
-        self.mode = mode # UCB or TS    
+        self.mode = mode # Epsilon-greedy or UCB or TS
         self.K = num_items
         self.d = context_dim
 
@@ -140,7 +140,9 @@ class LinearRegression:
         if UCB:
             return self.m @ context + self.c * np.sqrt(np.tensordot(context.T,np.tensordot(self.S, context, axes=([2],[0])), axes=([0],[1])))
         elif TS:
-            m = self.m.numpy(force=True) + self.sqrt_S @ self.rng.normal(0,1,self.d)
+            m = self.m.numpy(force=True)
+            for k in range(self.K):
+                m[k,:,:] += self.sqrt_S[k,:,:] @ self.rng.normal(0,1,self.d)
             return m @ context
         else:
             return self.m @ context
@@ -180,7 +182,7 @@ class LogisticRegression(nn.Module):
 
         epochs = 100
         lr = 1e-3
-        optimizer = torch.optim.Adam(self.parameters(), lr=lr)
+        optimizer = torch.optim.Adam(self.parameters(), lr=lr, amsgrad=True)
 
         losses = []
         for epoch in range(int(epochs)):
@@ -222,8 +224,10 @@ class LogisticRegression(nn.Module):
             U = torch.sigmoid(torch.matmul(self.m, X) + self.c * torch.sqrt(torch.tensordot(X.T,torch.tensordot(self.S, X, dims=([2],[0])), dims=([0],[1]))))
             return U.numpy(force=True)
         elif TS:
-            m = self.m.numpy(force=True) + self.sqrt_S @ self.rng.normal(0,1,self.d)
-            return (1 + np.exp(m @ context))**(-1)
+            m = self.m.numpy(force=True)
+            for k in range(self.K):
+                m[k,:,:] += self.sqrt_S[k,:,:] @ self.rng.normal(0,1,self.d)
+            return (1 + np.exp(- m @ context))**(-1)
         else:
             return torch.sigmoid(torch.matmul(self.m, X)).numpy(force=True)
     

@@ -729,35 +729,55 @@ class DQNBidder(Bidder):
         X = np.hstack((contexts.reshape(-1,self.context_dim), bids.reshape(-1, 1)))
         N = X.shape[0]
 
-        X_aug_neg = X.copy()
-        X_aug_neg[:, -1] = 0.0
+        # X_aug_neg = X.copy()
+        # X_aug_neg[:, -1] = 0.0
+        # X = torch.Tensor(np.vstack((X, X_aug_neg))).to(self.device)
 
-        X = torch.Tensor(np.vstack((X, X_aug_neg))).to(self.device)
+        X = torch.Tensor(X).to(self.device)
 
         y = won_mask.astype(np.float32).reshape(-1,1)
-        y = torch.Tensor(np.concatenate((y, np.zeros_like(y)))).to(self.device)
+        y = torch.Tensor(y).to(self.device)
+        # y = torch.Tensor(np.concatenate((y, np.zeros_like(y)))).to(self.device)
 
-        # Training config
         self.winrate_model.train()
+        # epochs = 100
+        # optimizer = torch.optim.Adam(self.winrate_model.parameters(), lr=self.lr, weight_decay=1e-6, amsgrad=True)
+        # B = min(8192, N)
+        # # batch_num = int(N/B)
+        # losses = []
+        # for epoch in range(int(epochs)):
+        #     for i in range(batch_num):
+        #         X_mini = X[i:i+B]
+        #         y_mini = y[i:i+B]
+        #         optimizer.zero_grad()
+
+        #         if self.method=='Bayes by Backprop':
+        #             loss = self.winrate_model.loss(X_mini, y_mini, N, 2, self.prior_var)
+        #         elif self.method=='NoisyNet':
+        #             loss = self.winrate_model.loss(X_mini, y_mini, 2)
+        #         else:
+        #             loss = self.winrate_model.loss(X_mini, y_mini)
+        #         loss.backward()
+        #         optimizer.step()
+        #     if epoch > 20 and np.abs(losses[-20] - losses[-1]) < 1e-6:
+        #         print(f'Stopping at Epoch {epoch}')
+        #         break
         epochs = 100
         optimizer = torch.optim.Adam(self.winrate_model.parameters(), lr=self.lr, weight_decay=1e-6, amsgrad=True)
-        B = min(8192, N)
-        batch_num = int(N/B)
-
         for epoch in range(int(epochs)):
-            for i in range(batch_num):
-                X_mini = X[i:i+B]
-                y_mini = y[i:i+B]
-                optimizer.zero_grad()
+            ind = np.random.choice(N, 512)
+            X_mini = X[ind]
+            y_mini = y[ind]
+            optimizer.zero_grad()
 
-                if self.method=='Bayes by Backprop':
-                    loss = self.winrate_model.loss(X_mini, y_mini, N, 2, self.prior_var)
-                elif self.method=='NoisyNet':
-                    loss = self.winrate_model.loss(X_mini, y_mini, 2)
-                else:
-                    loss = self.winrate_model.loss(X_mini, y_mini)
-                loss.backward()
-                optimizer.step()
+            if self.method=='Bayes by Backprop':
+                loss = self.winrate_model.loss(X_mini, y_mini, N, 2, self.prior_var)
+            elif self.method=='NoisyNet':
+                loss = self.winrate_model.loss(X_mini, y_mini, 2)
+            else:
+                loss = self.winrate_model.loss(X_mini, y_mini)
+            loss.backward()
+            optimizer.step()
         self.winrate_model.eval()
         self.model_initialised = True
 

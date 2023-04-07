@@ -3,7 +3,7 @@
     "num_runs": 3,
     "num_iter" : 100000,
     "record_interval": 2000,
-    "update_schedule": "even 1000",
+    "update_schedule": "even 100",
     "num_participants_per_round": 3,
     "context_dim": 10,
     "obs_context_dim": 8,
