@@ -334,7 +334,7 @@ if __name__ == '__main__':
                 plt.ylim(yrange[0], yrange[1])
             plt.yticks(fontsize=FONTSIZE - 2)
             plt.grid(True, 'major', 'y', ls='--', lw=.5, c='k', alpha=.3)
-            plt.legend(loc='upper left', bbox_to_anchor=(-.05, -.15), fontsize=FONTSIZE, ncol=3)
+            plt.legend(loc='upper left', bbox_to_anchor=(-.05, -.15), fontsize=FONTSIZE-4, ncol=3)
             plt.tight_layout()
             plt.savefig(f"{output_dir}/{measure_name.replace(' ', '_')}.png", bbox_inches='tight')
         except Exception as e:
@@ -367,7 +367,7 @@ if __name__ == '__main__':
         else:
             plt.ylim(yrange[0], yrange[1])
         plt.yticks(fontsize=FONTSIZE - 2)
-        plt.legend(loc='lower right', fontsize=FONTSIZE, ncol=3)
+        plt.legend(loc='lower right', fontsize=FONTSIZE-4, ncol=3)
         plt.tight_layout()
         plt.savefig(f"{output_dir}/{measure_name.replace(' ', '_')}.png", bbox_inches='tight')
         return df
@@ -385,7 +385,7 @@ if __name__ == '__main__':
         plt.xticks(fontsize=FONTSIZE - 2)
         plt.ylabel('Winrate', fontsize=FONTSIZE)
         plt.yticks(fontsize=FONTSIZE - 2)
-        plt.legend(loc='lower right', fontsize=FONTSIZE, ncol=3)
+        plt.legend(loc='lower right', fontsize=FONTSIZE-4, ncol=3)
         plt.tight_layout()
         plt.savefig(f"{output_dir}/winrate_estimation.png", bbox_inches='tight')
         return df

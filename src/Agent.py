@@ -60,9 +60,9 @@ class Agent:
             estim_CTRs = self.allocator.estimate_CTR(context, TS=True)
         else:
             estim_CTRs = self.allocator.estimate_CTR(context)
+    
         # Compute value if clicked
         estim_values = estim_CTRs * self.item_values
-        # Pick the best item (according to TS)
         best_item = np.argmax(estim_values)
 
         if not isinstance(self.allocator, OracleAllocator) and self.allocator.mode=='Epsilon-greedy':

@@ -5,6 +5,7 @@ import torch.nn as nn
 from numba import jit
 from torch.nn import functional as F
 from tqdm import tqdm
+import time
 
 
 @jit(nopython=True)
@@ -62,40 +63,82 @@ class BayesianLinear(nn.Module):
 # https://proceedings.neurips.cc/paper/2011/file/e53a0a2978c28872a4505bdb51db06dc-Paper.pdf
 
 class DiagLogisticRegression(torch.nn.Module):
-    def __init__(self, n_dim, n_items):
+    def __init__(self, context_dim, num_items, mode, rng, c=2.):
         super().__init__()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.m = torch.nn.Parameter(torch.Tensor(n_items, n_dim))
-        torch.nn.init.normal_(self.m, mean=0.0, std=1.0)
-        self.prev_iter_m = self.m.detach().clone().to(self.device)
-        self.q = torch.ones((n_items, n_dim)).to(self.device)
-        self.logloss = torch.nn.BCELoss(reduction='sum')
+        self.rng = rng
+        self.mode = mode
+        self.c = c
+
+        self.d = context_dim
+        self.K = num_items
+        self.m = torch.nn.Parameter(torch.Tensor(self.K, self.d))
+        nn.init.kaiming_uniform_(self.m)
+
+        self.S_inv = np.ones((self.K, self.d))
+        self.S = torch.ones((self.K, self.d)).to(self.device)
+        self.S0_inv = torch.ones((self.d,)).to(self.device)
+
+        self.BCE = torch.nn.BCELoss(reduction='sum')
         self.eval()
+    
+    def forward(self, X, A):
+        return torch.sigmoid(torch.sum(X * self.m[A], dim=1))
+    
+    def update(self, contexts, items, outcomes, name):
+        X = torch.Tensor(contexts).to(self.device)
+        A = torch.LongTensor(items).to(self.device)
+        y = torch.Tensor(outcomes).to(self.device)
 
-    def forward(self, x, sample=False):
-        ''' Predict outcome for all items, allow for posterior sampling '''
-        if sample:
-            return torch.sigmoid(F.linear(x, self.m + torch.normal(mean=0.0, std=1.0/torch.sqrt(self.q).to(self.device))))
-        else:
-            return torch.sigmoid(F.linear(x, self.m))
+        epochs = 100
+        lr = 1e-3
+        optimizer = torch.optim.Adam(self.parameters(), lr=lr, amsgrad=True)
 
-    def predict_item(self, x, a):
-        ''' Predict outcome for an item a, only MAP '''
-        return torch.sigmoid((x * self.m[a]).sum(axis=1))
-
-    def loss(self, predictions, labels):
-        prior_dist = self.q * (self.prev_iter_m - self.m)**2
-        return 0.5 * prior_dist.sum() + self.logloss(predictions, labels)
-
-    def laplace_approx(self, X, item):
-        P = (1 + torch.exp(1 - X.matmul(self.m[item, :].T))) ** (-1)
-        self.q[item, :] += (P*(1-P)).T.matmul(X ** 2).squeeze(0)
-
-    def update_prior(self):
-        self.prev_iter_m = self.m.detach().clone()
+        for epoch in range(int(epochs)):
+                optimizer.zero_grad()
+                loss = self.loss(X, A, y, self.S0_inv)
+                loss.backward()
+                optimizer.step()
+        
+        y = self(X, A).numpy(force=True)
+        X = contexts.reshape(-1,self.d)
+        for k in range(self.K):
+            mask = items==k
+            y_ = y[mask]
+            X_ = X[mask,:]
+            N = y_.shape[0]
+            y_ = y_ * (1 - y_)
+            S_inv = self.S0_inv.numpy(force=True)
+            S_inv += ((X**2).T @ y_).reshape(-1)
+            self.S_inv[k, :] = S_inv
+            self.S = torch.Tensor(np.sign(S_inv)/(np.abs(S_inv)+1e-2)).to(self.device)
+            
+    def loss(self, X, A, y, S0_inv):
+        y_pred = self(X, A)
+        loss = self.BCE(y_pred, y)
+        for k in range(self.K):
+            loss += torch.sum(self.m[k,:]**2 * S0_inv/2)
+        return loss
+    
+    def estimate_CTR(self, context, UCB=False, TS=False):
+        X = torch.Tensor(context.reshape(-1)).to(self.device)
+        with torch.no_grad():
+            if UCB:
+                U = torch.sigmoid(torch.matmul(self.m, X) + self.c * torch.sqrt((self.S)**(-1) @ (X**2).T))
+                ret = U.numpy(force=True)
+            elif TS:
+                m = self.m.numpy(force=True)
+                for k in range(self.K):
+                    m[k,:] += self.sqrt_S[k,:,:] @ self.rng.normal(0,1,self.d)
+                ret = (1 + np.exp(- m @ context))**(-1)
+                print(ret)
+            else:
+                ret = torch.sigmoid(torch.matmul(self.m, X)).numpy(force=True)
+        return ret
+                # return torch.sigmoid(torch.matmul(self.m, X)).numpy(force=True)
     
     def get_uncertainty(self):
-        return self.q.numpy(force=True).reshape(-1)
+        return self.S.reshape(-1)
 
 class LinearRegression:
     def __init__(self,context_dim, num_items, mode, rng, c=2.):
@@ -184,13 +227,11 @@ class LogisticRegression(nn.Module):
         lr = 1e-3
         optimizer = torch.optim.Adam(self.parameters(), lr=lr, amsgrad=True)
 
-        losses = []
         for epoch in range(int(epochs)):
                 optimizer.zero_grad()
                 loss = self.loss(X, A, y, self.S0_inv)
                 loss.backward()
                 optimizer.step()
-                losses.append(loss.item())
         
         y = self(X, A).numpy(force=True)
         X = contexts.reshape(-1,self.d)
@@ -220,21 +261,21 @@ class LogisticRegression(nn.Module):
     
     def estimate_CTR(self, context, UCB=False, TS=False):
         X = torch.Tensor(context.reshape(-1)).to(self.device)
-        if UCB:
-            U = torch.sigmoid(torch.matmul(self.m, X) + self.c * torch.sqrt(torch.tensordot(X.T,torch.tensordot(self.S, X, dims=([2],[0])), dims=([0],[1]))))
-            return U.numpy(force=True)
-        elif TS:
-            m = self.m.numpy(force=True)
-            for k in range(self.K):
-                m[k,:] += self.sqrt_S[k,:,:] @ self.rng.normal(0,1,self.d)
-            return (1 + np.exp(- m @ context))**(-1)
-        else:
-            return torch.sigmoid(torch.matmul(self.m, X)).numpy(force=True)
+        with torch.no_grad():
+            if UCB:
+                U = torch.sigmoid(torch.matmul(self.m, X) + self.c * torch.sqrt(torch.tensordot(X.T,torch.tensordot(self.S, X, dims=([2],[0])), dims=([0],[1]))))
+                return U.numpy(force=True)
+            elif TS:
+                m = self.m.numpy(force=True)
+                for k in range(self.K):
+                    m[k,:] += self.sqrt_S[k,:,:] @ self.rng.normal(0,1,self.d)
+                return (1 + np.exp(- m @ context))**(-1)
+            else:
+                return torch.sigmoid(torch.matmul(self.m, X)).numpy(force=True)
     
     def get_uncertainty(self):
         S_ = self.S.numpy(force=True)
         eigvals = [np.linalg.eigvals(S_[k,:,:]).reshape(-1) for k in range(self.K)]
-        S_ += 1e-4 * np.identity(self.d)
         return np.concatenate(eigvals).real
        
 class BayesianNeuralRegression(nn.Module):

@@ -17,66 +17,6 @@ class Allocator:
 
     def update(self, contexts, items, outcomes, name):
         pass
-
-
-class DiagLogisticAllocator(Allocator):
-    """ An allocator that estimates P(click) with Logistic Regression implemented in PyTorch"""
-
-    def __init__(self, rng, context_dim, num_items, mode, c=0.0):
-        self.response_model = DiagLogisticRegression(n_dim=context_dim, n_items=num_items)
-        self.mode = mode
-        self.c = c
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.response_model.to(self.device)
-        super().__init__(rng)
-
-    def update(self, contexts, items, outcomes, name):
-        # Rename
-        X, A, y = contexts, items, outcomes
-
-        if len(y) < 2:
-            return
-
-        # Fit the model
-        self.response_model.train()
-        epochs = 2000
-        lr = 1e-3
-        optimizer = torch.optim.Adam(self.response_model.parameters(), lr=lr)
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.5)
-
-        X, A, y = torch.Tensor(X).to(self.device), torch.LongTensor(A).to(self.device), torch.Tensor(y).to(self.device)
-        losses = []
-        for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
-            optimizer.zero_grad()  # Setting our stored gradients equal to zero
-            loss = self.response_model.loss(torch.squeeze(self.response_model.predict_item(X, A)), y)
-            loss.backward()  # Computes the gradient of the given tensor w.r.t. the weights/bias
-            optimizer.step()  # Updates weights and biases with the optimizer (SGD)
-            losses.append(loss.item())
-            scheduler.step(loss)
-
-            if epoch > 512 and np.abs(losses[-100] - losses[-1]) < 1e-6:
-                print(f'Stopping at Epoch {epoch}')
-                break
-
-        # Laplace Approximation for variance q
-        with torch.no_grad():
-            for item in range(self.response_model.m.shape[0]):
-                item_mask = items == item
-                X_item = torch.Tensor(contexts[item_mask]).to(self.device)
-                self.response_model.laplace_approx(X_item, item)
-            self.response_model.update_prior()
-
-        self.response_model.eval()
-
-    def estimate_CTR(self, context, UCB=False, MAP=False):
-        if UCB:
-            return self.response_model(torch.Tensor(context).to(self.device)).numpy(force=True) + \
-                self.c * np.sqrt(np.tensordot(context.T,np.tensordot(self.response_model.q.numpy(force=True), context, axes=([2],[0])), axes=([0],[1])))
-        else:
-            return self.response_model(torch.Tensor(context).to(self.device)).numpy(force=True)
-    
-    def get_uncertainty(self):
-        return self.response_model.get_uncertainty()
     
 class NeuralAllocator(Allocator):
     def __init__(self, rng, context_dim, num_items, mode, eps=0.1, prior_var=1.0):
@@ -156,6 +96,24 @@ class LinearAllocator(Allocator):
     def estimate_CTR(self, context, UCB=False, TS=False):
         return self.model.estimate_CTR(context, UCB, TS)
 
+    def get_uncertainty(self):
+        return self.model.get_uncertainty()
+    
+class DiagLogisticAllocator(Allocator):
+    def __init__(self, rng, context_dim, num_items, mode, c=0.0, eps=0.1):
+        super().__init__(rng)
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.mode = mode
+        self.c = c
+        self.eps = eps
+        self.model = DiagLogisticRegression(context_dim, num_items, self.c, self.rng).to(self.device)
+
+    def update(self, contexts, items, outcomes, name):
+        self.model.update(contexts, items, outcomes, name)
+
+    def estimate_CTR(self, context, UCB=False, TS=False):
+        self.model.estimate_CTR(context, UCB, TS)
+    
     def get_uncertainty(self):
         return self.model.get_uncertainty()
     
