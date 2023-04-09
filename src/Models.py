@@ -186,7 +186,7 @@ class LinearRegression:
         if UCB:
             return self.m @ context + self.c * np.sqrt(np.tensordot(context.T,np.tensordot(self.S, context, axes=([2],[0])), axes=([0],[1])))
         elif TS:
-            m = self.m.numpy(force=True)
+            m = self.m
             for k in range(self.K):
                 m[k,:] += self.nu * self.sqrt_S[k,:,:] @ self.rng.normal(0,1,self.d)
             return m @ context
@@ -229,7 +229,7 @@ class LogisticRegression(nn.Module):
         A = torch.LongTensor(items).to(self.device)
         y = torch.Tensor(outcomes).to(self.device)
 
-        epochs = 500
+        epochs = 100
         optimizer = torch.optim.Adam(self.parameters(), lr=self.lr, amsgrad=True)
 
         for epoch in range(int(epochs)):
