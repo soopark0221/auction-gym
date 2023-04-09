@@ -63,12 +63,14 @@ class BayesianLinear(nn.Module):
 # https://proceedings.neurips.cc/paper/2011/file/e53a0a2978c28872a4505bdb51db06dc-Paper.pdf
 
 class DiagLogisticRegression(torch.nn.Module):
-    def __init__(self, context_dim, num_items, mode, rng, c=2.):
+    def __init__(self, context_dim, num_items, mode, rng, lr, c=2., nu=1.0):
         super().__init__()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.rng = rng
         self.mode = mode
+        self.lr = lr
         self.c = c
+        self.nu = nu
 
         self.d = context_dim
         self.K = num_items
@@ -91,14 +93,13 @@ class DiagLogisticRegression(torch.nn.Module):
         y = torch.Tensor(outcomes).to(self.device)
 
         epochs = 100
-        lr = 1e-3
-        optimizer = torch.optim.Adam(self.parameters(), lr=lr, amsgrad=True)
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr, amsgrad=True)
 
         for epoch in range(int(epochs)):
-                optimizer.zero_grad()
-                loss = self.loss(X, A, y, self.S0_inv)
-                loss.backward()
-                optimizer.step()
+            optimizer.zero_grad()
+            loss = self.loss(X, A, y, self.S0_inv)
+            loss.backward()
+            optimizer.step()
         
         y = self(X, A).numpy(force=True)
         X = contexts.reshape(-1,self.d)
@@ -129,7 +130,7 @@ class DiagLogisticRegression(torch.nn.Module):
             elif TS:
                 m = self.m.numpy(force=True)
                 for k in range(self.K):
-                    m[k,:] += self.sqrt_S[k,:,:] @ self.rng.normal(0,1,self.d)
+                    m[k,:] += self.nu * self.sqrt_S[k,:,:] @ self.rng.normal(0,1,self.d)
                 ret = (1 + np.exp(- m @ context))**(-1)
                 print(ret)
             else:
@@ -141,16 +142,18 @@ class DiagLogisticRegression(torch.nn.Module):
         return self.S.reshape(-1)
 
 class LinearRegression:
-    def __init__(self,context_dim, num_items, mode, rng, c=2.):
+    def __init__(self,context_dim, num_items, mode, rng, c=2.0, nu=1.0):
         super().__init__()
         self.rng = rng
         self.mode = mode # Epsilon-greedy or UCB or TS
+
         self.K = num_items
         self.d = context_dim
 
         self.N = np.zeros((self.K,), dtype=int)
         self.lambda0 = 1.0    # regularization constant
         self.c = c
+        self.nu = nu
 
         self.yt_y = np.zeros((self.K,))
         self.Xt_y = np.zeros((self.K, self.d))
@@ -185,7 +188,7 @@ class LinearRegression:
         elif TS:
             m = self.m.numpy(force=True)
             for k in range(self.K):
-                m[k,:] += self.sqrt_S[k,:,:] @ self.rng.normal(0,1,self.d)
+                m[k,:] += self.nu * self.sqrt_S[k,:,:] @ self.rng.normal(0,1,self.d)
             return m @ context
         else:
             return self.m @ context
@@ -195,14 +198,17 @@ class LinearRegression:
         return np.concatenate(eigvals).real
 
 class LogisticRegression(nn.Module):
-    def __init__(self, context_dim, num_items, mode, rng, c=1.0):
+    def __init__(self, context_dim, num_items, mode, rng, lr, c=1.0, nu=1.0):
         super().__init__()
         self.rng = rng
         self.mode = mode
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.lr = lr
+
         self.K = num_items
         self.d = context_dim
         self.c = c
+        self.nu = nu
 
         self.m = nn.Parameter(torch.Tensor(self.K, self.d))
         nn.init.kaiming_uniform_(self.m)
@@ -223,9 +229,8 @@ class LogisticRegression(nn.Module):
         A = torch.LongTensor(items).to(self.device)
         y = torch.Tensor(outcomes).to(self.device)
 
-        epochs = 100
-        lr = 1e-3
-        optimizer = torch.optim.Adam(self.parameters(), lr=lr, amsgrad=True)
+        epochs = 500
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr, amsgrad=True)
 
         for epoch in range(int(epochs)):
                 optimizer.zero_grad()
@@ -268,7 +273,7 @@ class LogisticRegression(nn.Module):
             elif TS:
                 m = self.m.numpy(force=True)
                 for k in range(self.K):
-                    m[k,:] += self.sqrt_S[k,:,:] @ self.rng.normal(0,1,self.d)
+                    m[k,:] += self.nu * self.sqrt_S[k,:,:] @ self.rng.normal(0,1,self.d)
                 return (1 + np.exp(- m @ context))**(-1)
             else:
                 return torch.sigmoid(torch.matmul(self.m, X)).numpy(force=True)
@@ -366,8 +371,8 @@ class NeuralWinRateEstimator(nn.Module):
 
     def forward(self, x, sample=False):
         if self.skip_connection:
-            context = x[:-1]
-            gamma = x[-1]
+            context = x[:,:-1]
+            gamma = x[:,-1].reshape(-1,1)
             hidden = torch.relu(self.linear1(context))
             hidden_ = torch.concat([hidden, gamma], dim=-1)
             return torch.sigmoid(self.linear2(hidden_))
@@ -376,8 +381,16 @@ class NeuralWinRateEstimator(nn.Module):
             return torch.sigmoid(self.linear2(hidden))
     
     def loss(self, x, y):
-        y_pred = self(x)
-        return self.BCE(y_pred, y)
+        if self.skip_connection:
+            context = x[:,:-1]
+            gamma = x[:,-1].reshape(-1,1)
+            hidden = torch.relu(self.linear1(context))
+            hidden_ = torch.concat([hidden, gamma], dim=-1)
+            logit = self.linear2(hidden_)
+        else:
+            hidden = torch.relu(self.linear1(x))
+            logit = self.linear2(hidden)
+        return self.BCE(logit, y)
     
 class BBBWinRateEstimator(nn.Module):
     def __init__(self, context_dim):

@@ -19,7 +19,7 @@ class Allocator:
         pass
     
 class NeuralAllocator(Allocator):
-    def __init__(self, rng, context_dim, num_items, mode, eps=0.1, prior_var=1.0):
+    def __init__(self, rng, lr, context_dim, num_items, mode, eps=0.1, prior_var=1.0):
         self.mode = mode # epsilon-greedy, BBB
         if self.mode=='Epsilon-greedy':
             self.net = NeuralRegression(n_dim=context_dim, n_items=num_items)
@@ -29,6 +29,7 @@ class NeuralAllocator(Allocator):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.net.to(self.device)
         self.count = 0
+        self.lr = lr
         super().__init__(rng)
 
     def update(self, contexts, items, outcomes, name):
@@ -40,29 +41,44 @@ class NeuralAllocator(Allocator):
             if N<10:
                 return
 
+            # self.net.train()
+            # epochs = 100
+            # optimizer = torch.optim.Adam(self.net.parameters(), lr=self.lr)
+
+            # B = min(8192, N)
+            # batch_num = int(N/B)
+
+            # X, A, y = torch.Tensor(X).to(self.device), torch.LongTensor(A).to(self.device), torch.Tensor(y).to(self.device)
+            # losses = []
+            # for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
+            #     for i in range(batch_num):
+            #         X_mini = X[i:i+B]
+            #         A_mini = A[i:i+B]
+            #         y_mini = y[i:i+B]
+            #         optimizer.zero_grad()
+            #         if self.mode=='Epsilon-greedy':
+            #             loss = self.net.loss(self.net.predict_item(X_mini, A_mini).squeeze(), y_mini)
+            #         elif self.mode=='Bayes by Backprop':
+            #             loss = self.net.loss(self.net.predict_item(X_mini, A_mini).squeeze(), y_mini, N)
+            #         loss.backward()
+            #         optimizer.step()
+            #         losses.append(loss.item())
+            
             self.net.train()
             epochs = 100
-            lr = 1e-3
-            optimizer = torch.optim.Adam(self.net.parameters(), lr=lr)
-
-            B = min(8192, N)
-            batch_num = int(N/B)
+            optimizer = torch.optim.Adam(self.net.parameters(), lr=self.lr)
 
             X, A, y = torch.Tensor(X).to(self.device), torch.LongTensor(A).to(self.device), torch.Tensor(y).to(self.device)
             losses = []
-            for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
-                for i in range(batch_num):
-                    X_mini = X[i:i+B]
-                    A_mini = A[i:i+B]
-                    y_mini = y[i:i+B]
-                    optimizer.zero_grad()
-                    if self.mode=='Epsilon-greedy':
-                        loss = self.response_model.loss(self.response_model.predict_item(X_mini, A_mini).squeeze(), y_mini)
-                    elif self.mode=='Bayes by Backprop':
-                        loss = self.response_model.loss(self.response_model.predict_item(X_mini, A_mini).squeeze(), y_mini, N)
-                    loss.backward()
-                    optimizer.step()
-                    losses.append(loss.item())
+            for epoch in range(int(epochs)):
+                optimizer.zero_grad()
+                if self.mode=='Epsilon-greedy':
+                    loss = self.net.loss(self.net.predict_item(X, A).squeeze(), y)
+                elif self.mode=='Bayes by Backprop':
+                    loss = self.net.loss(self.net.predict_item(X, A).squeeze(), y, N)
+                loss.backward()
+                optimizer.step()
+                losses.append(loss.item())
         self.net.eval()
 
     def estimate_CTR(self, context, sample=True):
@@ -91,7 +107,6 @@ class LinearAllocator(Allocator):
 
     def update(self, contexts, items, outcomes, name):
         self.model.update(contexts, items, outcomes)
-        print(f"{name} : allocator updated")
 
     def estimate_CTR(self, context, UCB=False, TS=False):
         return self.model.estimate_CTR(context, UCB, TS)
@@ -100,13 +115,15 @@ class LinearAllocator(Allocator):
         return self.model.get_uncertainty()
     
 class DiagLogisticAllocator(Allocator):
-    def __init__(self, rng, context_dim, num_items, mode, c=0.0, eps=0.1):
+    def __init__(self, rng, lr, context_dim, num_items, mode, c=0.0, eps=0.1):
         super().__init__(rng)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.mode = mode
+        self.lr = lr
+
         self.c = c
         self.eps = eps
-        self.model = DiagLogisticRegression(context_dim, num_items, self.c, self.rng).to(self.device)
+        self.model = DiagLogisticRegression(context_dim, num_items, self.c, self.rng, self.lr).to(self.device)
 
     def update(self, contexts, items, outcomes, name):
         self.model.update(contexts, items, outcomes, name)
@@ -118,16 +135,17 @@ class DiagLogisticAllocator(Allocator):
         return self.model.get_uncertainty()
     
 class LogisticAllocator(Allocator):
-    def __init__(self, rng, context_dim, num_items, mode, c=0.0, eps=0.1):
+    def __init__(self, rng, lr, context_dim, num_items, mode, c=0.0, eps=0.1):
         super().__init__(rng)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.mode = mode
+        self.lr = lr
 
         self.K = num_items
         self.d = context_dim
         self.c = c
         self.eps = eps
-        self.model = LogisticRegression(self.d, self.K, self.c, self.rng).to(self.device)
+        self.model = LogisticRegression(self.d, self.K, self.c, self.rng, self.lr).to(self.device)
 
         temp = [np.identity(self.d) for _ in range(self.K)]
         self.S0_inv = torch.Tensor(np.identity(self.d)).to(self.device)
@@ -144,18 +162,19 @@ class LogisticAllocator(Allocator):
         return self.model.get_uncertainty()
 
 class NeuralLinearAllocator(Allocator):
-    def __init__(self, rng, context_dim, num_items, mode, c=1.0, eps=0.1):
+    def __init__(self, rng, lr, context_dim, num_items, mode, c=1.0, eps=0.1):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.lr = lr
 
         self.d = context_dim
         self.K = num_items
-        self.net = NeuralRegression(self.d, self.K).to(self.device)
+        self.net = NeuralRegression(self.d, self.K, self.lr).to(self.device)
 
         split = mode.split()
         if split[0]=='Linear':
             self.model = LinearRegression(self.net.H, self.K, split[1], self.rng).to(self.device)
         elif split[0]=='Logistic':
-            self.model = LogisticRegression(self.net.H, self.K, split[1], self.rng).to(self.device)
+            self.model = LogisticRegression(self.net.H, self.K, split[1], self.rng, self.lr).to(self.device)
         self.mode = split[1]
 
         self.c = c
@@ -171,23 +190,20 @@ class NeuralLinearAllocator(Allocator):
             N = y.size(0)
 
             self.net.train()
-            epochs = 100
-            lr = 1e-3
-            optimizer = torch.optim.Adam(self.net.parameters(), lr=lr)
+            epochs = int(N/5)
+            optimizer = torch.optim.Adam(self.net.parameters(), lr=self.lr)
 
-            B = min(8192, N)
-            batch_num = int(N/B)
             losses = []
-            for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
-                for i in range(batch_num):
-                    X_mini = X[i:i+B]
-                    A_mini = A[i:i+B]
-                    y_mini = y[i:i+B]
-                    optimizer.zero_grad()
-                    loss = self.net.loss(self.net.predict_item(X_mini, A_mini).squeeze(), y_mini)
-                    loss.backward()
-                    optimizer.step()
-                    losses.append(loss.item())
+            for epoch in range(int(epochs)):
+                ind = np.random.choice(N, 512)
+                X_mini = X[ind]
+                y_mini = y[ind]
+                A_mini = A[ind]
+                optimizer.zero_grad()
+                loss = self.net.loss(self.net.predict_item(X_mini, A_mini).squeeze(), y_mini)
+                loss.backward()
+                optimizer.step()
+                losses.append(loss.item())
             self.net.eval()
         
         F = self.net.feature(X).numpy(force=True)
@@ -202,14 +218,15 @@ class NeuralLinearAllocator(Allocator):
         return self.model.get_uncertainty()
     
 class NTKAllocator(Allocator):
-    def __init__(self, rng, context_dim, num_items, mode, c=1.0, nu=1.0):
+    def __init__(self, rng, lr, context_dim, num_items, mode, c=1.0, nu=1.0):
         super().__init__(rng)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.mode = mode    # TS or UCB
+        self.lr = lr
 
         self.d = context_dim
         self.K = num_items
-        self.nets = [NeuralRegression(self.d, 1).to(self.device) for _ in range(self.K)]
+        self.nets = [NeuralRegression(self.d, 1, self.lr).to(self.device) for _ in range(self.K)]
 
         temp = [np.identity(self.d) for _ in range(self.K)]
         self.Z_inv = np.stack(temp)
@@ -231,17 +248,11 @@ class NTKAllocator(Allocator):
 
                 self.nets[k].train()
                 epochs = 100
-                lr = 1e-3
-                optimizer = torch.optim.Adam(self.nets[k].parameters(), lr=lr)
+                optimizer = torch.optim.Adam(self.nets[k].parameters(), lr=self.lr)
 
-                B = min(8192, N)
-                batch_num = int(N/B)
                 for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
-                    for i in range(batch_num):
-                        X_mini = X[i:i+B]
-                        y_mini = y[i:i+B]
                         optimizer.zero_grad()
-                        loss = self.nets[k].loss(self.nets[k].predict_item(X_mini).squeeze(), y_mini)
+                        loss = self.nets[k].loss(self.nets[k].predict_item(X).squeeze(), y)
                         loss.backward()
                         optimizer.step()
                 self.nets[k].eval()
@@ -272,6 +283,7 @@ class NTKAllocator(Allocator):
             ret =  mean + std * self.rng.normal(0,1,self.K)
         for k in range(self.K):
             self.Z[k] += np.outer(g[k],g[k])/self.nets[k].H
+            self.Z_inv[k] -= self.Z_inv[k] @ (np.outer(g[k],g[k])/self.nets[k].H) @ self.Z_inv[k]/(1+ g[k]@self.Z_inv[k]@g[k])
         return ret
 
     def grad(self, X):
@@ -292,14 +304,18 @@ class OracleAllocator(Allocator):
     """ An allocator that acts based on the true P(click)"""
 
     def __init__(self, rng):
-        self.item_embeddings = None
+        self.item_features = None
+        self.activation = None
         super(OracleAllocator, self).__init__(rng)
 
-    def update_item_embeddings(self, item_embeddings):
-        self.item_embeddings = item_embeddings
+    def update_item_features(self, item_features):
+        self.item_features = item_features
 
     def estimate_CTR(self, context):
-        return sigmoid(self.item_embeddings @ context / np.sqrt(context.shape[0]))
+        if self.activation=='Linear':
+            return 0.5 + 0.5 * context @ self.item_features.T
+        else:    # Logistic
+            return sigmoid(context @ self.item_features.T)
     
     def get_uncertainty(self):
         return np.array([0])

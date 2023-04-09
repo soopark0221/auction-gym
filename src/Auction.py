@@ -30,20 +30,8 @@ class Auction:
         activation, distribution = self.context_dist.split()
         if activation=='Linear':
             if distribution=='Gaussian':
-                while True:
-                    context = self.rng.normal(0.0, 1.0, size=self.context_dim)
-                    if np.sum(context**2)<=1.0:
-                        return context
-            elif distribution=='Bernoulli':
-                while True:
-                    context = self.rng.binomial(1, self.bernoulli_p, size=self.context_dim)
-                    if np.sum(context**2)<=1.0:
-                        return context
-            else:
-                while True:
-                    context = self.rng.uniform(-1.0, 1.0, size=self.context_dim)
-                    if np.sum(context**2)<=1.0:
-                        return context
+                context = self.rng.normal(0.0, 1.0, size=self.context_dim)
+                return context / np.sqrt(np.sum(context**2))
         else:    # Logistic
             if distribution=='Gaussian':
                 return self.rng.normal(0.0, 1.0, size=self.context_dim)
@@ -56,7 +44,7 @@ class Auction:
     def CTR(self, context, item_features):
         activation, _ = self.context_dist.split()
         if activation=='Linear':
-            return context @ item_features.T
+            return 0.5 + 0.5 * context @ item_features.T
         else:    # Logistic
             return sigmoid(context @ item_features.T)
 

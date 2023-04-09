@@ -49,8 +49,11 @@ def parse_agent_config(rng, context_dim, obs_context_dim, item_feature_var, path
 
     agents2items = {}
     for agent_config in agent_configs:
-        feature = rng.normal(0.0, 1.0, size=(agent_config['num_items'], context_dim))
-        agents2items[agent_config['name']] = feature / np.sqrt(np.sum(feature**2))
+        temp = []
+        for k in range(agent_config['num_items']):
+            feature = rng.normal(0.0, 1.0, size=context_dim)
+            temp.append(feature / np.sqrt(np.sum(feature**2)))
+        agents2items[agent_config['name']] = np.stack(temp)
         
 
     agents2item_values = {
@@ -61,7 +64,7 @@ def parse_agent_config(rng, context_dim, obs_context_dim, item_feature_var, path
     return agent_configs, agents2items, agents2item_values, output_dir
 
 
-def instantiate_agents(rng, agent_configs, agents2item_values, agents2items, obs_context_dim, update_schedule):
+def instantiate_agents(rng, agent_configs, agents2item_values, agents2items, obs_context_dim, update_schedule, context_dist):
     # Store agents to be re-instantiated in subsequent runs
     # Set up agents
     agents = [
@@ -77,9 +80,11 @@ def instantiate_agents(rng, agent_configs, agents2item_values, agents2items, obs
         for agent_config in agent_configs
     ]
 
+    activation, distribution = context_dist.split()
     for agent in agents:
         if isinstance(agent.allocator, OracleAllocator):
-            agent.allocator.update_item_embeddings(agents2items[agent.name])
+            agent.allocator.update_item_features(agents2items[agent.name])
+            agent.allocator.activation = activation
 
     return agents
 
@@ -98,6 +103,24 @@ def instantiate_auction(rng, training_config, agents2items, agents2item_values, 
 
 
 def simulation_run(run):
+    for agent in auction.agents:
+        if agent.name.rfind('Competitor')<0:
+            for i in range(2):
+                context = auction.generate_context()
+                obs_context = context[:obs_context_dim]
+                if isinstance(agent.allocator, OracleAllocator):
+                    item, estimated_CTR = agent.select_item(context)
+                else:
+                    item, estimated_CTR = agent.select_item(obs_context)
+                value = agent.item_values[item]
+                gamma = np.linspace(0.1, 1.5, 128).reshape(-1,1)
+                x = np.concatenate([
+                    np.tile(obs_context, (128, 1)),
+                    np.tile(estimated_CTR*value, (128,1))*gamma
+                ], axis=1)
+                x = torch.Tensor(x).to(agent.bidder.device)
+                y = agent.bidder.winrate_model(x).numpy(force=True).reshape(-1,1)
+                agent2critic_estimation[agent.name].append(np.concatenate([gamma, y], axis=1))
     for i in tqdm(np.arange(1, num_iter+1), desc=f'run {run}'):
         auction.simulate_opportunity()
 
@@ -215,7 +238,7 @@ if __name__ == '__main__':
     # Repeated runs
     for run in range(num_runs):
         # Reinstantiate agents and auction per run
-        agents = instantiate_agents(rng, agent_configs, agents2item_values, agents2items, obs_context_dim, update_schedule)
+        agents = instantiate_agents(rng, agent_configs, agents2item_values, agents2items, obs_context_dim, update_schedule, context_dist)
         auction  = instantiate_auction(
             rng, training_config, agents2items, agents2item_values, agents, max_slots, context_dim, obs_context_dim, context_dist)
         

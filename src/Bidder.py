@@ -34,7 +34,8 @@ class TruthfulBidder(Bidder):
         self.noise = noise
 
     def bid(self, value, context, estimated_CTR, clock):
-        return value * estimated_CTR + self.rng.normal(0,self.noise,1), 0.0
+        bid = value * estimated_CTR + self.rng.normal(0,self.noise,1)
+        return bid.item(), 0.0
 
 class DQNBidder(Bidder):
     def __init__(self, rng, lr, gamma_mu, gamma_sigma, context_dim, exploration_method, epsilon=0.1, noise=0.02, prior_var=1.0):
@@ -65,17 +66,40 @@ class DQNBidder(Bidder):
         self.winrate_model.to(self.device)
         self.model_initialised = False
         super().__init__(rng)
+    
+    def initialize(self):
+        X = []
+        y = []
+        for i in range(1000):
+            context = self.rng.normal(0.0, 1.0, size=self.context_dim)
+            gamma = self.rng.uniform(0.0, 1.0, 10)
+            y.append(np.min(5*gamma, 1.0))
+            X.append(np.concatenate([np.tile(context/np.sqrt(np.sum(context**2)), (10,1)), gamma], axis=-1))
+        X = torch.Tensor(np.stack(X))
+        y = torch.Tensor(np.stack(y))
+
+        epochs = 1000
+        optimizer = torch.optim.Adam(self.winrate_model.parameters(), lr=self.lr, weight_decay=1e-6, amsgrad=True)
+        MSE = nn.MSELoss()
+        self.winrate_model.train()
+        for epoch in range(int(epochs)):
+            optimizer.zero_grad()
+            y_pred = self.winrate_model(X)
+            loss = MSE(y_pred, y)
+            loss.backward()
+            optimizer.step()
+        self.winrate_model.eval()
 
     def bid(self, value, context, estimated_CTR, clock):
         # Compute the bid as expected value
-        bid = value * estimated_CTR
+        expected_value = value * estimated_CTR
         if not self.model_initialised:
             # If it is the first iteration, collect data with simple initial policy
             gamma = self.rng.normal(self.gamma_mu, self.gamma_sigma)
         else:
             # Grid search over gamma
             n_values_search = 128
-            gamma_grid = np.linspace(0.1, 1.5 ,n_values_search)
+            gamma_grid = np.linspace(0.1, 1.0 ,n_values_search)
             x = torch.Tensor(np.hstack([np.tile(context, ((n_values_search, 1))), np.tile(estimated_CTR*value,
                                         (n_values_search, 1))*gamma_grid.reshape(-1,1)])).to(self.device)
 
@@ -87,17 +111,16 @@ class DQNBidder(Bidder):
             else:
                 prob_win = self.winrate_model(x).numpy(force=True).ravel()
 
-            expected_value = bid
-            shaded_bids = expected_value * gamma_grid
+            shaded_bids = value * gamma_grid
             estimated_utility = prob_win * (expected_value - shaded_bids)
             gamma = gamma_grid[np.argmax(estimated_utility)]
         
         if self.method=='Epsilon-greedy' and self.rng.random()<self.eps:
-            gamma = self.rng.uniform(0.1,1.5)
+            gamma = self.rng.uniform(0.1,1.0)
         elif self.method=='Gaussian Noise':
-            gamma = np.clip(gamma+self.rng.normal(0,self.noise), 0.1, 1.5)
+            gamma = np.clip(gamma+self.rng.normal(0,self.noise), 0.1, 1.0)
 
-        bid *= gamma
+        bid = value*gamma
         self.gammas.append(gamma)
         return bid, 0.0
 
@@ -156,17 +179,13 @@ class DQNBidder(Bidder):
         epochs = 100
         optimizer = torch.optim.Adam(self.winrate_model.parameters(), lr=self.lr, weight_decay=1e-6, amsgrad=True)
         for epoch in range(int(epochs)):
-            ind = np.random.choice(N, 512)
-            X_mini = X[ind]
-            y_mini = y[ind]
             optimizer.zero_grad()
-
             if self.method=='Bayes by Backprop':
-                loss = self.winrate_model.loss(X_mini, y_mini, N, 2, self.prior_var)
+                loss = self.winrate_model.loss(X, y, N, 2, self.prior_var)
             elif self.method=='NoisyNet':
-                loss = self.winrate_model.loss(X_mini, y_mini, 2)
+                loss = self.winrate_model.loss(X, y, 2)
             else:
-                loss = self.winrate_model.loss(X_mini, y_mini)
+                loss = self.winrate_model.loss(X, y)
             loss.backward()
             optimizer.step()
         self.winrate_model.eval()
