@@ -86,7 +86,7 @@ class LinearAllocator(Allocator):
         self.c = c
         self.eps = eps
 
-        self.model = LinearRegression(self.d, self.K, self.mode, self.c)
+        self.model = LinearRegression(self.d, self.K, self.mode, rng, self.c)
         self.model.m = self.rng.normal(0 , 1/np.sqrt(self.d), (self.K, self.d))
 
     def update(self, contexts, items, outcomes, name):
@@ -145,6 +145,8 @@ class LogisticAllocator(Allocator):
 
 class NeuralLinearAllocator(Allocator):
     def __init__(self, rng, context_dim, num_items, mode, c=1.0, eps=0.1):
+        super().__init__(rng)
+        self.rng = rng
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         self.d = context_dim
@@ -244,7 +246,8 @@ class NTKAllocator(Allocator):
                         X_mini = X[i:i+B]
                         y_mini = y[i:i+B]
                         optimizer.zero_grad()
-                        loss = self.nets[k].loss(self.nets[k].predict_item(X_mini).squeeze(), y_mini)
+                        preds = self.nets[k].predict_item(X_mini).squeeze(1)
+                        loss = self.nets[k].loss(preds, y_mini)
                         loss.backward()
                         optimizer.step()
                 self.nets[k].eval()
