@@ -183,7 +183,7 @@ class LinearRegression:
         if UCB:
             return self.m @ context + self.c * np.sqrt(np.tensordot(context.T,np.tensordot(self.S, context, axes=([2],[0])), axes=([0],[1])))
         elif TS:
-            m = self.m.numpy(force=True)
+            m = self.m
             for k in range(self.K):
                 m[k,:] += self.sqrt_S[k,:,:] @ self.rng.normal(0,1,self.d)
             return m @ context

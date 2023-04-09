@@ -192,8 +192,8 @@ class NeuralLinearAllocator(Allocator):
                     losses.append(loss.item())
             self.net.eval()
         
-        F = self.net.feature(X).numpy(force=True)
-        self.model.update(F, items, outcomes, name)
+            F = self.net.feature(X).numpy(force=True)
+            self.model.update(F, items, outcomes, name)
 
     def estimate_CTR(self, context, UCB=False, TS=False):
         X = torch.Tensor(context.reshape(-1)).to(self.device)
