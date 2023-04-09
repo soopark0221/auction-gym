@@ -50,7 +50,7 @@ def parse_agent_config(rng, context_dim, obs_context_dim, item_feature_var, path
     agents2items = {}
     for agent_config in agent_configs:
         feature = rng.normal(0.0, 1.0, size=(agent_config['num_items'], context_dim))
-        agent_config['name']: feature / np.sqrt(np.sum(feature**2))
+        agents2items[agent_config['name']] = feature / np.sqrt(np.sum(feature**2))
         
 
     agents2item_values = {

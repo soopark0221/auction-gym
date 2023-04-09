@@ -31,6 +31,7 @@ class TruthfulBidder(Bidder):
     def __init__(self, rng, noise=0.0):
         super(TruthfulBidder, self).__init__(rng)
         self.truthful = True
+        self.noise = noise
 
     def bid(self, value, context, estimated_CTR, clock):
         return value * estimated_CTR + self.rng.normal(0,self.noise,1), 0.0
