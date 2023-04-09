@@ -8,7 +8,7 @@
     "context_dim": 10,
     "obs_context_dim": 8,
     "item_feature_var": 1.0,
-    "context_distribution": "Gaussian",
+    "context_distribution": "Logistic Gaussian",
     "allocation": "FirstPrice",
     "network_architecture": "input-16-output"
 }

@@ -27,15 +27,38 @@ class Auction:
         self.num_participants_per_round = num_participants_per_round
     
     def generate_context(self):
-        if self.context_dist=='Gaussian':
-            return self.rng.normal(0.0, 1.0, size=self.context_dim)
-        elif self.context_dist=='Bernoulli':
-            return self.rng.binomial(1, self.bernoulli_p, size=self.context_dim)
-        else:
-            return self.rng.uniform(-1.0, 1.0, size=self.context_dim)
+        activation, distribution = self.context_dist.split()
+        if activation=='Linear':
+            if distribution=='Gaussian':
+                while True:
+                    context = self.rng.normal(0.0, 1.0, size=self.context_dim)
+                    if np.sum(context**2)<=1.0:
+                        return context
+            elif distribution=='Bernoulli':
+                while True:
+                    context = self.rng.binomial(1, self.bernoulli_p, size=self.context_dim)
+                    if np.sum(context**2)<=1.0:
+                        return context
+            else:
+                while True:
+                    context = self.rng.uniform(-1.0, 1.0, size=self.context_dim)
+                    if np.sum(context**2)<=1.0:
+                        return context
+        else:    # Logistic
+            if distribution=='Gaussian':
+                return self.rng.normal(0.0, 1.0, size=self.context_dim)
+            elif distribution=='Bernoulli':
+                return self.rng.binomial(1, self.bernoulli_p, size=self.context_dim)
+            else:
+                return self.rng.uniform(-1.0, 1.0, size=self.context_dim)
+
     
     def CTR(self, context, item_features):
-        return sigmoid(context @ item_features.T / np.sqrt(self.context_dim))
+        activation, _ = self.context_dist.split()
+        if activation=='Linear':
+            return context @ item_features.T
+        else:    # Logistic
+            return sigmoid(context @ item_features.T)
 
     def simulate_opportunity(self):
         # Sample the number of slots uniformly between [1, max_slots]

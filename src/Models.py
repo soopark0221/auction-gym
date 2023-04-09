@@ -312,10 +312,11 @@ class NeuralRegression(nn.Module):
     def __init__(self, n_dim, n_items):
         super().__init__()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.n_dim = n_dim
-        self.n_items = n_items
-        self.feature = nn.Linear(self.n_dim, 16)
-        self.head = nn.Linear(16, self.n_items)
+        self.d = n_dim
+        self.K = n_items
+        self.H = 16
+        self.feature = nn.Linear(self.d, self.H)
+        self.head = nn.Linear(self.H, self.K)
         self.BCE = nn.BCELoss()
         self.eval()
 
@@ -323,47 +324,60 @@ class NeuralRegression(nn.Module):
         x = torch.relu(self.feature(x))
         return torch.sigmoid(self.head(x))
 
-    def predict_item(self, x, a):
-        return self(x)[range(a.size(0)),a]
+    def predict_item(self, x, a=None):
+        if self.K==1:
+            return self(x)
+        else:
+            return self(x)[range(a.size(0)),a]
 
     def loss(self, predictions, labels):
         return self.BCE(predictions, labels)
 
 
-class PyTorchWinRateEstimator(torch.nn.Module):
+class LogisticWinRateEstimator(nn.Module):
     def __init__(self, context_dim):
-        super(PyTorchWinRateEstimator, self).__init__()
-        self.ffn = torch.nn.Sequential(
-            torch.nn.Linear(context_dim+3, 1, bias=True),
-            torch.nn.Sigmoid()
+        super().__init__()
+        self.ffn = nn.Sequential(
+            nn.Linear(context_dim+1, 1),
+            nn.Sigmoid()
         )
-        self.metric = nn.BCELoss()
+        self.BCE = nn.BCELoss()
         self.eval()
 
-    def forward(self, x):
+    def forward(self, x, sample=False):
         return self.ffn(x)
     
     def loss(self, x, y):
-        return self.metric(self.ffn(x), y)
+        return self.BCE(self.ffn(x), y)
     
     
 class NeuralWinRateEstimator(nn.Module):
-    def __init__(self, context_dim):
+    def __init__(self, context_dim, skip_connection=True):
         super().__init__()
-        self.ffn = nn.Sequential(*[
-            nn.Linear(context_dim+1,16),
-            nn.ReLU(),
-            nn.Linear(16,1)]
-            )
+        self.skip_connection = skip_connection
+        self.H = 16
+        if self.skip_connection:
+            self.linear1 = nn.Linear(context_dim, self.H-1)
+        else:
+            self.linear1 = nn.Linear(context_dim+1, self.H)
+        self.linear2 = nn.Linear(self.H, 1)
         self.BCE = nn.BCEWithLogitsLoss()
         self.eval()
 
     def forward(self, x, sample=False):
-        return torch.sigmoid(self.ffn(x))
+        if self.skip_connection:
+            context = x[:-1]
+            gamma = x[-1]
+            hidden = torch.relu(self.linear1(context))
+            hidden_ = torch.concat([hidden, gamma], dim=-1)
+            return torch.sigmoid(self.linear2(hidden_))
+        else:
+            hidden = torch.relu(self.linear1(x))
+            return torch.sigmoid(self.linear2(hidden))
     
     def loss(self, x, y):
-        logits = self.ffn(x)
-        return self.BCE(logits, y)
+        y_pred = self(x)
+        return self.BCE(y_pred, y)
     
 class BBBWinRateEstimator(nn.Module):
     def __init__(self, context_dim):

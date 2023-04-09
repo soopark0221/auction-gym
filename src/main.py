@@ -46,10 +46,12 @@ def parse_agent_config(rng, context_dim, obs_context_dim, item_feature_var, path
 
     # First sample item catalog (so it is consistent over different configs with the same seed)
     # Agent : (item_embedding, item_value)
-    agents2items = {
-        agent_config['name']: rng.normal(0.0, item_feature_var, size=(agent_config['num_items'], context_dim))
-        for agent_config in agent_configs
-    }
+
+    agents2items = {}
+    for agent_config in agent_configs:
+        feature = rng.normal(0.0, 1.0, size=(agent_config['num_items'], context_dim))
+        agent_config['name']: feature / np.sqrt(np.sum(feature**2))
+        
 
     agents2item_values = {
         agent_config['name']: rng.lognormal(0.1, 0.2, agent_config['num_items'])
@@ -308,7 +310,7 @@ if __name__ == '__main__':
                         df_rows['Winrate'].append(array[i,1])
         return pd.DataFrame(df_rows)
 
-    def plot_measure_per_agent(run2agent2measure, measure_name, cumulative=False, log_y=False, yrange=None, optimal=None):
+    def plot_measure_per_agent(run2agent2measure, measure_name, log_y=False, yrange=None, optimal=None):
         # Generate DataFrame for Seaborn
         if type(run2agent2measure) != pd.DataFrame:
             df = measure_per_agent2df(run2agent2measure, measure_name)
@@ -414,7 +416,7 @@ if __name__ == '__main__':
     underbid_regret_df = plot_measure_per_agent(run2agent2underbid_regret, 'Underbid Regret')
     underbid_regret_df.to_csv(f'{output_dir}/underbid_regret.csv', index=False)
 
-    plot_measure_per_agent(run2agent2CTR_RMSE, 'CTR RMSE', log_y=True)
+    plot_measure_per_agent(run2agent2CTR_RMSE, 'CTR RMSE')
     plot_measure_per_agent(run2agent2CTR_bias, 'CTR Bias', optimal=1.0) #, yrange=(.5, 5.0))
 
     # bidding_var_df = plot_measure_per_agent(run2agent2bidding_var, 'Variance of Policy')

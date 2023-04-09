@@ -149,14 +149,13 @@ class NeuralLinearAllocator(Allocator):
 
         self.d = context_dim
         self.K = num_items
-        self.H = 16    # hidden layer dimension
         self.net = NeuralRegression(self.d, self.K).to(self.device)
 
         split = mode.split()
         if split[0]=='Linear':
-            self.model = LinearRegression(self.H, self.K, split[1], self.rng).to(self.device)
+            self.model = LinearRegression(self.net.H, self.K, split[1], self.rng).to(self.device)
         elif split[0]=='Logistic':
-            self.model = LogisticRegression(self.H, self.K, split[1], self.rng).to(self.device)
+            self.model = LogisticRegression(self.net.H, self.K, split[1], self.rng).to(self.device)
         self.mode = split[1]
 
         self.c = c
@@ -201,6 +200,93 @@ class NeuralLinearAllocator(Allocator):
 
     def get_uncertainty(self):
         return self.model.get_uncertainty()
+    
+class NTKAllocator(Allocator):
+    def __init__(self, rng, context_dim, num_items, mode, c=1.0, nu=1.0):
+        super().__init__(rng)
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.mode = mode    # TS or UCB
+
+        self.d = context_dim
+        self.K = num_items
+        self.nets = [NeuralRegression(self.d, 1).to(self.device) for _ in range(self.K)]
+
+        temp = [np.identity(self.d) for _ in range(self.K)]
+        self.Z_inv = np.stack(temp)
+        self.Z = self.Z_inv.copy()
+        self.uncertainty = np.zeros((self.K,))
+
+        self.c = c
+        self.nu = nu
+        self.count = 0
+
+    def update(self, contexts, items, outcomes, name):
+        self.count += 1
+
+        if self.count%10==0:
+            for k in range(self.K):
+                mask = items==k
+                X, y = torch.Tensor(contexts[mask]).to(self.device), torch.Tensor(outcomes[mask]).to(self.device)
+                N = X.size(0)
+
+                self.nets[k].train()
+                epochs = 100
+                lr = 1e-3
+                optimizer = torch.optim.Adam(self.nets[k].parameters(), lr=lr)
+
+                B = min(8192, N)
+                batch_num = int(N/B)
+                for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
+                    for i in range(batch_num):
+                        X_mini = X[i:i+B]
+                        y_mini = y[i:i+B]
+                        optimizer.zero_grad()
+                        loss = self.nets[k].loss(self.nets[k].predict_item(X_mini).squeeze(), y_mini)
+                        loss.backward()
+                        optimizer.step()
+                self.nets[k].eval()
+
+    def estimate_CTR(self, context, UCB=False, TS=False):
+        X = torch.Tensor(context.reshape(-1)).to(self.device)
+        if UCB:
+            mean = []
+            g = self.grad(X)
+            bound = []
+            for k in range(self.K):
+                mean.append(self.nets[k](X).numpy(force=True).squeeze())
+                bound.append(self.c * np.sqrt(np.tensordot(g[k], np.tensordot(self.Z_inv, g[k], axes=([2],[0])), axes=([0],[1]))).squeeze())
+            mean = np.stack(mean)
+            bound = np.stack(bound)
+            self.uncertainty = bound
+            ret =  mean + bound
+        elif TS:
+            mean = []
+            g = self.grad(X)
+            std = []
+            for k in range(self.K):
+                mean.append(self.nets[k](X).numpy(force=True).squeeze())
+                std.append(self.nu * np.sqrt(np.tensordot(g[k], np.tensordot(self.Z_inv, g[k], axes=([2],[0])), axes=([0],[1]))).squeeze())
+            mean = np.stack(mean)
+            std = np.stack(std)
+            self.uncertainty = std
+            ret =  mean + std * self.rng.normal(0,1,self.K)
+        for k in range(self.K):
+            self.Z[k] += np.outer(g[k],g[k])/self.nets[k].H
+        return ret
+
+    def grad(self, X):
+        g = []
+        for k in range(self.K):
+            y = self.nets[k](X).squeeze()
+            y.backward()
+            temp = []
+            for param in self.nets[k].parameters():
+                temp.append(param.grad.numpy(force=True))
+            g.append(np.concatenate(temp).flatten())
+        return np.stack(g)
+
+    def get_uncertainty(self):
+        return self.uncertainty.flatten()
 
 class OracleAllocator(Allocator):
     """ An allocator that acts based on the true P(click)"""
