@@ -366,8 +366,8 @@ class NeuralWinRateEstimator(nn.Module):
 
     def forward(self, x, sample=False):
         if self.skip_connection:
-            context = x[:-1]
-            gamma = x[-1]
+            context = x[:,:-1]
+            gamma = x[:,-1].unsqueeze(1)
             hidden = torch.relu(self.linear1(context))
             hidden_ = torch.concat([hidden, gamma], dim=-1)
             return torch.sigmoid(self.linear2(hidden_))

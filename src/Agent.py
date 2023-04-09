@@ -60,11 +60,9 @@ class Agent:
             estim_CTRs = self.allocator.estimate_CTR(context, TS=True)
         else:
             estim_CTRs = self.allocator.estimate_CTR(context)
-    
         # Compute value if clicked
         estim_values = estim_CTRs * self.item_values
         best_item = np.argmax(estim_values)
-
         if not isinstance(self.allocator, OracleAllocator) and self.allocator.mode=='Epsilon-greedy':
             if self.rng.uniform(0,1)<self.allocator.eps:
                 best_item = self.rng.choice(self.num_items, 1).item()
@@ -89,10 +87,10 @@ class Agent:
         else:
             bid, variance = self.bidder.bid(value, context, estimated_CTR, self.clock)
             if not isinstance(self.allocator, OracleAllocator) and self.allocator.mode=='UCB':
-                mean_CTR = self.allocator.estimate_CTR(context, UCB=False)
+                mean_CTR = self.allocator.estimate_CTR(context, UCB=True)
                 estimated_CTR = mean_CTR[best_item]
             elif not isinstance(self.allocator, OracleAllocator) and self.allocator.mode=='TS':
-                estimated_CTR = self.allocator.estimate_CTR(context, TS=False)
+                estimated_CTR = self.allocator.estimate_CTR(context, TS=True)
 
         # Log what we know so far
         self.logs.append(ImpressionOpportunity(context=context,
