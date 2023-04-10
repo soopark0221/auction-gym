@@ -212,28 +212,25 @@ class NeuralLinearAllocator(Allocator):
 
     def get_uncertainty(self):
         return self.model.get_uncertainty()
-    
+
 class NTKAllocator(Allocator):
     def __init__(self, rng, lr, context_dim, num_items, mode, c=1.0, nu=1.0):
         super().__init__(rng)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.mode = mode    # TS or UCB
         self.lr = lr
-
         self.d = context_dim
         self.K = num_items
-        self.nets = [NeuralRegression(self.d, 1, self.lr).to(self.device) for _ in range(self.K)]
-
-        #theta = self.flatten(self.nets[k].parameters())
-        Z_size = len(self.flatten(self.nets[0].parameters()))
-        Z_temp = [np.identity(Z_size) for _ in range(self.K)]
-        #temp = [np.identity(self.d) for _ in range(self.K)]
-        self.Z_inv = np.stack(Z_temp)
-        self.Z = self.Z_inv.copy()
+        self.nets = [NeuralRegression(self.d, 1).to(self.device) for _ in range(self.K)]
+        for net in self.nets:
+            net.initialize_weights()
+        self.p = self.flatten(self.nets[0].parameters()).size(0)
+        self.Z_inv = torch.Tensor(np.eye(self.p)).to(self.device)
+        self.Z = torch.Tensor(np.eye(self.p)).to(self.device)
         self.uncertainty = np.zeros((self.K,))
 
         self.c = c
-        self.nu = nu
+        self.nu = 0.1
         self.count = 0
 
     def update(self, contexts, items, outcomes, name):
@@ -244,73 +241,67 @@ class NTKAllocator(Allocator):
                 mask = items==k
                 X, y = torch.Tensor(contexts[mask]).to(self.device), torch.Tensor(outcomes[mask]).to(self.device)
                 N = X.size(0)
-
                 self.nets[k].train()
                 epochs = 100
-                optimizer = torch.optim.Adam(self.nets[k].parameters(), lr=self.lr)
-
+                lr = 1e-3
+                optimizer = torch.optim.Adam(self.nets[k].parameters(), lr=lr)
                 for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
-                        optimizer.zero_grad()
-                        loss = self.nets[k].loss(self.nets[k].predict_item(X).squeeze(), y)
-                        loss.backward()
-                        optimizer.step()
+                    optimizer.zero_grad()
+                    loss = self.nets[k].loss(self.nets[k].predict_item(X).squeeze(1), y)
+                    loss.backward()
+                    optimizer.step()
                 self.nets[k].eval()
 
     def estimate_CTR(self, context, UCB=False, TS=False):
         X = torch.Tensor(context.reshape(-1)).to(self.device)
         g = self.grad(X)
         if UCB:
-            means = []
             bounds = []
             rets = []
             for k in range(self.K):
                 mean = self.nets[k](X).numpy(force=True).squeeze()
                 means.append(mean)
-                bound = self.c * np.sqrt(np.tensordot(g[k], np.tensordot(np.expand_dims(self.Z_inv[k], axis=0), g[k], axes=([2],[0])), axes=([0],[1]))).squeeze()
+                bound = self.c * torch.sqrt(((1/self.nets[k].H)*torch.matmul(torch.matmul(g[k].mT,self.Z_inv),g[k])).to(self.device))
                 bounds.append(bound)
                 ret = mean + bound
                 rets.append(ret)
-            means = np.stack(means)
             bounds = np.stack(bounds)
             self.uncertainty = bounds
         elif TS:
-            means = []
             sigmas = []
             rets = []
             for k in range(self.K):
                 mean = self.nets[k](X).numpy(force=True).squeeze()
-                means.append(mean)
-                sigma = self.nu * np.sqrt(np.tensordot(g[k], np.tensordot(np.expand_dims(self.Z_inv[k], axis=0), g[k], axes=([2],[0])), axes=([0],[1]))).squeeze()
-                sigmas.append(sigma)
-                ret =  mean + sigma * self.rng.normal(0,1)
+                sigma = torch.sqrt(((1/self.nets[k].H)*torch.matmul(torch.matmul(g[k].mT,self.Z_inv),g[k])).to(self.device)).numpy(force=True)
+                ret =  mean + self.nu * sigma * self.rng.normal(0,1)
                 rets.append(ret)
+                sigmas.append(sigma)
 
             self.uncertainty = np.stack(sigmas)
-        for k in range(self.K):
-            self.Z[k] += np.outer(g[k],g[k])/self.nets[k].H
-            self.Z_inv[k] -= self.Z_inv[k] @ (np.outer(g[k],g[k])/self.nets[k].H) @ self.Z_inv[k]/(1+ g[k]@self.Z_inv[k]@g[k])
-        return ret
+        max_k = np.argmax(rets)
+        self.Z += torch.matmul(g[max_k],g[max_k].mT).to(self.device)/self.nets[k].H
+        self.Z_inv = torch.inverse(torch.diag(torch.diag(self.Z))) 
+        return rets
 
     def grad(self, X):
         g = []
         for k in range(self.K):
             y = self.nets[k](X).squeeze()
-            #for param in self.nets[k].parameters():
-            #    temp.append(param.grad.numpy(force=True))
-            #g.append(np.concatenate(temp).flatten())
             g_k = torch.autograd.grad(outputs=y, inputs=self.nets[k].parameters())
             g_k = self.flatten(g_k)
             g.append(g_k)
-        return np.stack(g)
+        return torch.stack(g)
 
     def flatten(self, tensor):
-        T=torch.tensor([]).to('cpu')
+        T=torch.tensor([]).to(self.device)
         for element in tensor:
-            T=torch.cat([T, element.to('cpu').flatten()])
-        return T.detach().numpy()
+            T=torch.cat([T,element.to(self.device).flatten()])
+        return T
 
     def get_uncertainty(self):
         return self.uncertainty.flatten()
+
+
 
 class OracleAllocator(Allocator):
     """ An allocator that acts based on the true P(click)"""
