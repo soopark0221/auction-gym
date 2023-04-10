@@ -310,14 +310,14 @@ class NTKAllocator(Allocator):
             rets = []
             for k in range(self.K):
                 mean = self.nets[k](X).numpy(force=True).squeeze()
-                sigma = torch.sqrt(((1/self.nets[k].H)*torch.matmul(torch.matmul(g[k].mT,self.Z_inv),g[k])).to(self.device)).numpy(force=True)
+                sigma = torch.sqrt(((1/self.nets[k].H)*torch.matmul(torch.matmul(g[k],self.Z_inv),g[k]))).numpy(force=True)
                 ret =  mean + self.nu * sigma * self.rng.normal(0,1)
                 rets.append(ret)
                 sigmas.append(sigma)
 
-            self.uncertainty = np.stack(sigmas)
+            self.uncertainty = np.stack(sigmas).reshape(-1)
         max_k = np.argmax(rets)
-        self.Z += torch.matmul(g[max_k],g[max_k].mT).to(self.device)/self.nets[k].H
+        self.Z += torch.outer(g[max_k],g[max_k])/self.nets[k].H
         self.Z_inv = torch.inverse(torch.diag(torch.diag(self.Z))) 
         return rets
 
@@ -328,7 +328,7 @@ class NTKAllocator(Allocator):
             g_k = torch.autograd.grad(outputs=y, inputs=self.nets[k].parameters())
             g_k = self.flatten(g_k)
             g.append(g_k)
-        return torch.stack(g)
+        return torch.stack(g).to(self.device)
 
     def flatten(self, tensor):
         T=torch.tensor([]).to(self.device)
