@@ -115,7 +115,7 @@ class LinearAllocator(Allocator):
         return self.model.get_uncertainty()
     
 class DiagLogisticAllocator(Allocator):
-    def __init__(self, rng, lr, context_dim, num_items, mode, c=0.0, eps=0.1):
+    def __init__(self, rng, lr, context_dim, num_items, mode, c=0.0, eps=0.1, nu=0.1):
         super().__init__(rng)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.mode = mode
@@ -123,7 +123,16 @@ class DiagLogisticAllocator(Allocator):
 
         self.c = c
         self.eps = eps
-        self.model = DiagLogisticRegression(context_dim, num_items, self.c, self.rng, self.lr).to(self.device)
+        self.nu = nu
+        if self.mode=='UCB':
+            self.model = DiagLogisticRegression(
+                context_dim, num_items, self.mode, self.rng, self.lr, c=self.c).to(self.device)
+        elif self.mode=='TS':
+            self.model = DiagLogisticRegression(
+                context_dim, num_items, self.mode, self.rng, self.lr, nu=self.nu).to(self.device)
+        else:
+            self.model = DiagLogisticRegression(
+                context_dim, num_items, self.mode, self.rng, self.lr).to(self.device)
 
     def update(self, contexts, items, outcomes, name):
         self.model.update(contexts, items, outcomes, name)
@@ -135,7 +144,7 @@ class DiagLogisticAllocator(Allocator):
         return self.model.get_uncertainty()
     
 class LogisticAllocator(Allocator):
-    def __init__(self, rng, lr, context_dim, num_items, mode, c=0.0, eps=0.1):
+    def __init__(self, rng, lr, context_dim, num_items, mode, c=0.0, eps=0.1, nu=0.0):
         super().__init__(rng)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.mode = mode
@@ -145,12 +154,30 @@ class LogisticAllocator(Allocator):
         self.d = context_dim
         self.c = c
         self.eps = eps
-        self.model = LogisticRegression(self.d, self.K, self.c, self.rng, self.lr).to(self.device)
-
+        self.nu = nu
+        if self.mode=='UCB':
+            self.model = LogisticRegression(self.d, self.K, self.mode, self.rng, self.lr, c=self.c).to(self.device)
+        elif self.mode=='TS':
+            self.model = LogisticRegression(self.d, self.K, self.mode, self.rng, self.lr, nu=self.nu).to(self.device)
+        else:
+            self.model = LogisticRegression(self.d, self.K, self.mode, self.rng, self.lr).to(self.device)
         temp = [np.identity(self.d) for _ in range(self.K)]
         self.S0_inv = torch.Tensor(np.identity(self.d)).to(self.device)
         self.S_inv = np.stack(temp)
         self.S = torch.Tensor(self.S_inv.copy()).to(self.device)
+
+        # self.initialize()
+    
+    def initialize(self):
+        X = []
+        for i in range(1000):
+            context = self.rng.normal(0.0, 1.0, size=self.d)
+            X.append(context/np.sqrt(np.sum(context**2)))
+        X = np.stack(X)
+        y = np.ones((1000,))
+        A = self.rng.choice(self.K, (1000,))
+
+        self.update(X, A, y, "")
 
     def update(self, contexts, items, outcomes, name):
         self.model.update(contexts, items, outcomes, name)
@@ -162,26 +189,38 @@ class LogisticAllocator(Allocator):
         return self.model.get_uncertainty()
 
 class NeuralLinearAllocator(Allocator):
-    def __init__(self, rng, lr, context_dim, num_items, mode, c=1.0, eps=0.1):
+    def __init__(self, rng, lr, context_dim, num_items, mode, c=1.0, eps=0.1, nu=0.1):
+        super().__init__(rng)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.lr = lr
+        self.mode = mode
+        self.c = c
+        self.eps = eps
+        self.nu = nu
 
         self.d = context_dim
         self.K = num_items
-        self.net = NeuralRegression(self.d, self.K, self.lr).to(self.device)
+        self.net = NeuralRegression(self.d, self.K).to(self.device)
+        self.H = self.net.H
 
         split = mode.split()
         if split[0]=='Linear':
-            self.model = LinearRegression(self.net.H, self.K, split[1], self.rng).to(self.device)
+            if split[1]=='UCB':
+                self.model = LinearRegression(self.H, self.K, self.mode, self.rng, c=self.c).to(self.device)
+            elif split[1]=='TS':
+                self.model = LinearRegression(self.H, self.K, self.mode, self.rng, nu=self.nu).to(self.device)
+            else:
+                self.model = LinearRegression(self.H, self.K, self.mode, self.rng).to(self.device)
         elif split[0]=='Logistic':
-            self.model = LogisticRegression(self.net.H, self.K, split[1], self.rng, self.lr).to(self.device)
+            if split[1]=='UCB':
+                self.model = LogisticRegression(self.H, self.K, self.mode, self.rng, self.lr, c=self.c).to(self.device)
+            elif split[1]=='TS':
+                self.model = LogisticRegression(self.H, self.K, self.mode, self.rng, self.lr, nu=self.nu).to(self.device)
+            else:
+                self.model = LogisticRegression(self.H, self.K, self.mode, self.rng, self.lr).to(self.device)
         self.mode = split[1]
-
-        self.c = c
-        self.eps = eps
         self.count = 0
-        super().__init__(rng)
-
+        
     def update(self, contexts, items, outcomes, name):
         self.count += 1
 

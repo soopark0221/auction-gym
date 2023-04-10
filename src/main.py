@@ -150,6 +150,26 @@ def simulation_run(run):
 
                 print('Average Best Value for Agent: ', best_expected_value)
                 agent.move_index()
+                
+        if i%(record_interval*3)==0 and i<10000:
+            for agent in auction.agents:
+                if agent.name.rfind('Competitor')<0:
+                    for i in range(2):
+                        context = auction.generate_context()
+                        obs_context = context[:obs_context_dim]
+                        if isinstance(agent.allocator, OracleAllocator):
+                            item, estimated_CTR = agent.select_item(context)
+                        else:
+                            item, estimated_CTR = agent.select_item(obs_context)
+                        value = agent.item_values[item]
+                        gamma = np.linspace(0.1, 1.5, 128).reshape(-1,1)
+                        x = np.concatenate([
+                            np.tile(obs_context, (128, 1)),
+                            np.tile(estimated_CTR*value, (128,1))*gamma
+                        ], axis=1)
+                        x = torch.Tensor(x).to(agent.bidder.device)
+                        y = agent.bidder.winrate_model(x).numpy(force=True).reshape(-1,1)
+                        agent2critic_estimation[agent.name].append(np.concatenate([gamma, y], axis=1))
 
             auction_revenue.append(auction.revenue)
             auction.clear_revenue()
@@ -432,7 +452,8 @@ if __name__ == '__main__':
 
     plot_measure_per_agent(run2agent2best_expected_value, 'Mean Expected Value for Top Ad')
 
-    plot_measure_per_agent(run2agent2allocation_regret, 'Allocation Regret')
+    allocation_regret_df = plot_measure_per_agent(run2agent2allocation_regret, 'Allocation Regret')
+    allocation_regret_df.to_csv(f'{output_dir}/allocation_regret.csv', index=False)
     plot_measure_per_agent(run2agent2estimation_regret, 'Estimation Regret')
     overbid_regret_df = plot_measure_per_agent(run2agent2overbid_regret, 'Overbid Regret')
     overbid_regret_df.to_csv(f'{output_dir}/overbid_regret.csv', index=False)

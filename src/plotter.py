@@ -6,31 +6,32 @@ import argparse
 import numpy as np
 from os import path
 
-data_path = 'results/results_to_be_plotted'
-output_dir = 'results/'
+data_path = 'results/results_to_plot'
+output_dir = 'results/plots'
+experiment = 'Winrate_init'
+subpath = '1'
+measure_to_plot = 'Net Utility'
 FIGSIZE = (8, 5)
 FONTSIZE = 14
-rounds_per_iter = 10000
-obs_embedding_size = 5
-embedding_size = 5
 
-def plot_measure_overall(df, measure_name='Social Surplus'):
+def plot_measure_overall(df, measure_name):
         df = df[~df['Agent'].str.startswith('Competitor')]
 
         fig, axes = plt.subplots(figsize=FIGSIZE)
         plt.title(f'{measure_name} Over Time: {experiment}', fontsize=FONTSIZE + 2)
-        sns.lineplot(data=df, x="Iteration", hue='Model', y=measure_name, ax=axes)
+        sns.lineplot(data=df, x="Step", hue="Agent", y=measure_name, ax=axes)
         min_measure = min(0.0, np.min(df[measure_name]))
         max_measure = max(0.0, np.max(df[measure_name]))
-        plt.xlabel('Iteration', fontsize=FONTSIZE)
+        plt.xlabel('Step', fontsize=FONTSIZE)
         plt.xticks(fontsize=FONTSIZE - 2)
         plt.ylabel(f'{measure_name}', fontsize=FONTSIZE)
         factor = 1.1 if min_measure < 0 else 0.9
         plt.ylim(min_measure * factor, max_measure * 1.1)
         plt.yticks(fontsize=FONTSIZE - 2)
         plt.grid(True, 'major', 'y', ls='--', lw=.5, c='k', alpha=.3)
+        plt.legend(loc='lower right', fontsize=FONTSIZE-4)
         plt.tight_layout()
-        plt.savefig(f"{output_dir}/{experiment}_{rounds_per_iter}_rounds_{num_iter}_iters_{num_runs}_runs_{obs_embedding_size}_emb_of_{embedding_size}.png", bbox_inches='tight')
+        plt.savefig(f"{output_dir}/{experiment}_{measure_name}.png", bbox_inches='tight')
         return df
 
 def plot_vector_measure_per_agent(df, measure_name, cumulative=False, log_y=False, yrange=None, optimal=None):
@@ -53,39 +54,86 @@ def plot_vector_measure_per_agent(df, measure_name, cumulative=False, log_y=Fals
         else:
             plt.ylim(yrange[0], yrange[1])
         plt.yticks(fontsize=FONTSIZE - 2)
-        plt.legend(loc='lower right', fontsize=FONTSIZE, ncol=3)
+        plt.legend(loc='lower right', fontsize=FONTSIZE-4, ncol=3)
         plt.tight_layout()
-        plt.savefig(f"{output_dir}/{measure_name.replace(' ', '_')}_{rounds_per_iter}_rounds_{num_iter}_iters_{num_runs}_runs_{obs_embedding_size}_emb_of_{embedding_size}.png", bbox_inches='tight')
+        plt.savefig(f"{output_dir}/{experiment}_{measure_name.replace(' ', '_')}.png", bbox_inches='tight')
         # plt.show()
         return df
 
-if __name__=='__main__':
-     df =  pd.read_csv('results/FP_DDPG-BBB_TS_PO/230326-050952/uncertainty_8192_rounds_15_iters_3_runs_8_emb_of_10.csv')
-     num_iter = np.max(df['Iteration'])
-     num_runs = np.max(df['Run'])
+def utility_per_method():
+    global experiment, data_path
+    subpath = 'utility_1'
+    data_path = path.join(data_path, subpath)
+    methods = ['Logistic-Eps', 'Logistic-UCB', 'NeuralNet', 'NeuralLogistic-Eps', 'NeuralLogistic-UCB']
+    file_list = [path.join(data_path, method+'.csv') for method in methods]
 
-     plot_vector_measure_per_agent(df, 'Uncertainty in Parameters')
+    df_list = []
 
-#     experiment = 'DR_PO3'
-
-#     data_path = path.join(data_path, experiment)
-#     settings = ['Baseline', 'Gaussian_Noise', 'NoisyNet', 'SWAG']
-#     file_list = [path.join(data_path, setting+'.csv') for setting in settings]
-
-#     df_list = []
-
-#     for setting, file in zip(settings, file_list):
-#          df = pd.read_csv(file)
-#          df = df[df['Iteration']<15]
-#          df['Model'] = setting
-#          df_list.append(df)
+    for setting, file in zip(methods, file_list):
+         df = pd.read_csv(file)
+         df_list.append(df)
     
-#     df = pd.concat(df_list)
-#     df = df[df['Measure Name']=='Social Surplus']
-#     df = df[['Run', 'Iteration', 'Measure', 'Model']]
-#     columns = ['Run', 'Iteration', 'Social Surplus', 'Model']
-#     df.columns = columns
-#     num_iter = np.max(df['Iteration'])
-#     num_runs = np.max(df['Run'])
+    df = pd.concat(df_list)
+    df = df[~df['Agent'].str.startswith('Competitor')]
 
-#     plot_measure_overall(df)
+    df['Cumulative Utility'] = df.groupby(['Agent', 'Run'])['Net Utility'].cumsum()
+
+    fig, axes = plt.subplots(figsize=FIGSIZE)
+    plt.title(f'Cumulative Utility Over Time: {experiment}', fontsize=FONTSIZE + 2)
+    sns.lineplot(data=df, x="Step", hue="Agent", y="Cumulative Utility", ax=axes)
+    min_measure = min(0.0, np.min(df["Cumulative Utility"]))
+    max_measure = max(0.0, np.max(df["Cumulative Utility"]))
+    plt.xlabel('Step', fontsize=FONTSIZE)
+    plt.xticks(fontsize=FONTSIZE - 2)
+    plt.ylabel('Cumulative Utility', fontsize=FONTSIZE)
+    factor = 1.1 if min_measure < 0 else 0.9
+    plt.ylim(min_measure * factor, max_measure * 1.1)
+    plt.yticks(fontsize=FONTSIZE - 2)
+    plt.grid(True, 'major', 'y', ls='--', lw=.5, c='k', alpha=.3)
+    plt.legend(loc='lower right', fontsize=FONTSIZE-4)
+    plt.tight_layout()
+    plt.savefig(f"{output_dir}/{experiment}_Cumulative_Utility.png", bbox_inches='tight')
+
+def regret_per_method():
+    global experiment, data_path
+    subpath = 'regrets_1'
+    data_path = path.join(data_path, subpath)
+    methods = ['Logistic-Eps', 'Logistic-UCB', 'NeuralNet', 'NeuralLogistic-Eps', 'NeuralLogistic-UCB']
+    file_list = [path.join(data_path, method+'.csv') for method in methods]
+
+    df_list = []
+
+    for setting, file in zip(methods, file_list):
+         df = pd.read_csv(file)
+         df_list.append(df)
+    
+    df = pd.concat(df_list)
+    df = df[~df['Agent'].str.startswith('Competitor')]
+
+    for r in ['Allocation Regret', 'Overbid Regret', 'Underbid Regret']:
+        df[r] = df.groupby(['Agent', 'Run'])[r].cumsum()
+    for r in ['Allocation Regret', 'Overbid Regret', 'Underbid Regret']:
+        plot_measure_overall(df, r)
+
+def winning_prob_per_method():
+    global experiment, data_path
+    subpath = 'winning_prob_1'
+    data_path = path.join(data_path, subpath)
+    methods = ['Logistic-Eps', 'Logistic-UCB', 'NeuralNet', 'NeuralLogistic-Eps', 'NeuralLogistic-UCB']
+    file_list = [path.join(data_path, method+'.csv') for method in methods]
+
+    df_list = []
+
+    for setting, file in zip(methods, file_list):
+         df = pd.read_csv(file)
+         df_list.append(df)
+    
+    df = pd.concat(df_list)
+    df = df[~df['Agent'].str.startswith('Competitor')]
+
+    plot_measure_overall(df, 'Probability of winning')
+
+if __name__=='__main__':
+    utility_per_method()
+    regret_per_method()
+    winning_prob_per_method()

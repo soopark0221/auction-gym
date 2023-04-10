@@ -86,11 +86,11 @@ class Agent:
             bid, variance = gamma*value, 0.0
         else:
             bid, variance = self.bidder.bid(value, context, estimated_CTR, self.clock)
-            if not isinstance(self.allocator, OracleAllocator) and self.allocator.mode=='UCB':
-                mean_CTR = self.allocator.estimate_CTR(context, UCB=True)
-                estimated_CTR = mean_CTR[best_item]
-            elif not isinstance(self.allocator, OracleAllocator) and self.allocator.mode=='TS':
-                estimated_CTR = self.allocator.estimate_CTR(context, TS=True)
+            # if not isinstance(self.allocator, OracleAllocator) and self.allocator.mode=='UCB':
+            #     mean_CTR = self.allocator.estimate_CTR(context, UCB=False)
+            #     estimated_CTR = mean_CTR[best_item]
+            # elif not isinstance(self.allocator, OracleAllocator) and self.allocator.mode=='TS':
+            #     estimated_CTR = self.allocator.estimate_CTR(context, TS=False)
 
         # Log what we know so far
         self.logs.append(ImpressionOpportunity(context=context,

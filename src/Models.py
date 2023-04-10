@@ -110,9 +110,9 @@ class DiagLogisticRegression(torch.nn.Module):
             N = y_.shape[0]
             y_ = y_ * (1 - y_)
             S_inv = self.S0_inv.numpy(force=True)
-            S_inv += ((X**2).T @ y_).reshape(-1)
+            S_inv += ((X_**2).T @ y_).reshape(-1)
             self.S_inv[k, :] = S_inv
-            self.S = torch.Tensor(np.sign(S_inv)/(np.abs(S_inv)+1e-2)).to(self.device)
+            self.S = torch.Tensor(1/(S_inv+1e-2)).to(self.device)
             
     def loss(self, X, A, y, S0_inv):
         y_pred = self(X, A)
@@ -129,10 +129,10 @@ class DiagLogisticRegression(torch.nn.Module):
                 ret = U.numpy(force=True)
             elif TS:
                 m = self.m.numpy(force=True)
+                sqrt_S = np.sqrt(self.S.numpy(force=True))
                 for k in range(self.K):
-                    m[k,:] += self.nu * self.sqrt_S[k,:,:] @ self.rng.normal(0,1,self.d)
+                    m[k] += self.nu * np.diag(sqrt_S[k]) @ self.rng.normal(0,1,self.d)
                 ret = (1 + np.exp(- m @ context))**(-1)
-                print(ret)
             else:
                 ret = torch.sigmoid(torch.matmul(self.m, X)).numpy(force=True)
         return ret
@@ -268,7 +268,8 @@ class LogisticRegression(nn.Module):
         X = torch.Tensor(context.reshape(-1)).to(self.device)
         with torch.no_grad():
             if UCB:
-                U = torch.sigmoid(torch.matmul(self.m, X) + self.c * torch.sqrt(torch.tensordot(X.T,torch.tensordot(self.S, X, dims=([2],[0])), dims=([0],[1]))))
+                bound = self.c * torch.sqrt(torch.tensordot(X,torch.tensordot(self.S, X, dims=([2],[0])), dims=([0],[1])))
+                U = torch.sigmoid(torch.matmul(self.m, X) + bound)
                 return U.numpy(force=True)
             elif TS:
                 m = self.m.numpy(force=True)

@@ -39,6 +39,7 @@ class TruthfulBidder(Bidder):
 
 class DQNBidder(Bidder):
     def __init__(self, rng, lr, gamma_mu, gamma_sigma, context_dim, exploration_method, epsilon=0.1, noise=0.02, prior_var=1.0):
+        super().__init__(rng)
         self.lr = lr
         self.gamma_mu = gamma_mu
         self.gamma_sigma = gamma_sigma
@@ -65,24 +66,26 @@ class DQNBidder(Bidder):
             self.winrate_model = NoisyNetWinRateEstimator(context_dim)
         self.winrate_model.to(self.device)
         self.model_initialised = False
-        super().__init__(rng)
+        self.initialize()
     
     def initialize(self):
         X = []
         y = []
-        for i in range(1000):
+        for i in range(500):
             context = self.rng.normal(0.0, 1.0, size=self.context_dim)
-            gamma = self.rng.uniform(0.0, 1.0, 10)
-            y.append(np.min(5*gamma, 1.0))
+            gamma = self.rng.uniform(0.0, 1.5, 10).reshape(-1,1)
+            y.append((1 + np.exp(-10*(gamma-1.0)))**(-1))
             X.append(np.concatenate([np.tile(context/np.sqrt(np.sum(context**2)), (10,1)), gamma], axis=-1))
-        X = torch.Tensor(np.stack(X))
-        y = torch.Tensor(np.stack(y))
+        self.X_init = np.concatenate(X)
+        self.y_init = np.concatenate(y)
+        X = torch.Tensor(self.X_init).to(self.device)
+        y = torch.Tensor(self.y_init).to(self.device)
 
-        epochs = 1000
+        epochs = 100000
         optimizer = torch.optim.Adam(self.winrate_model.parameters(), lr=self.lr, weight_decay=1e-6, amsgrad=True)
         MSE = nn.MSELoss()
         self.winrate_model.train()
-        for epoch in range(int(epochs)):
+        for epoch in tqdm(range(epochs), desc='initializing winrate estimators'):
             optimizer.zero_grad()
             y_pred = self.winrate_model(X)
             loss = MSE(y_pred, y)
@@ -99,7 +102,7 @@ class DQNBidder(Bidder):
         else:
             # Grid search over gamma
             n_values_search = 128
-            gamma_grid = np.linspace(0.1, 1.0 ,n_values_search)
+            gamma_grid = np.linspace(0.1, 1.5 ,n_values_search)
             x = torch.Tensor(np.hstack([np.tile(context, ((n_values_search, 1))), np.tile(estimated_CTR*value,
                                         (n_values_search, 1))*gamma_grid.reshape(-1,1)])).to(self.device)
 
@@ -116,9 +119,9 @@ class DQNBidder(Bidder):
             gamma = gamma_grid[np.argmax(estimated_utility)]
         
         if self.method=='Epsilon-greedy' and self.rng.random()<self.eps:
-            gamma = self.rng.uniform(0.1,1.0)
+            gamma = self.rng.uniform(0.1,1.5)
         elif self.method=='Gaussian Noise':
-            gamma = np.clip(gamma+self.rng.normal(0,self.noise), 0.1, 1.0)
+            gamma = np.clip(gamma+self.rng.normal(0,self.noise), 0.1, 1.5)
 
         bid = value*gamma
         self.gammas.append(gamma)
@@ -141,6 +144,7 @@ class DQNBidder(Bidder):
         # Augment data with samples: if you shade 100%, you will lose
         # If you won now, you would have also won if you bid higher
         X = np.hstack((contexts.reshape(-1,self.context_dim), bids.reshape(-1, 1)))
+        X = np.concatenate([X, self.X_init])
         N = X.shape[0]
 
         # X_aug_neg = X.copy()
@@ -150,6 +154,7 @@ class DQNBidder(Bidder):
         X = torch.Tensor(X).to(self.device)
 
         y = won_mask.astype(np.float32).reshape(-1,1)
+        y = np.concatenate([y, self.y_init])
         y = torch.Tensor(y).to(self.device)
         # y = torch.Tensor(np.concatenate((y, np.zeros_like(y)))).to(self.device)
 
