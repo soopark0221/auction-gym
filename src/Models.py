@@ -113,11 +113,7 @@ class DiagLogisticRegression(torch.nn.Module):
             S_inv = self.S0_inv.numpy(force=True)
             S_inv += ((X_**2).T @ y_).reshape(-1)
             self.S_inv[k, :] = S_inv
-<<<<<<< HEAD
-            self.S = torch.Tensor(1/(S_inv+1e-2)).to(self.device)
-=======
             self.S[k,:] = torch.Tensor(np.sign(S_inv)/(np.abs(S_inv)+1e-2)).to(self.device)
->>>>>>> 36a1de93b55372e00768b06fc7f5a03add29cf1c
             
     def loss(self, X, A, y, S0_inv):
         y_pred = self(X, A)
@@ -130,26 +126,20 @@ class DiagLogisticRegression(torch.nn.Module):
         X = torch.Tensor(context.reshape(-1)).to(self.device)
         with torch.no_grad():
             if UCB:
-                U = torch.sigmoid(torch.matmul(self.m, X) + self.c * torch.sqrt((self.S)**(-1) @ (X**2).T))
-                ret = U.numpy(force=True)
+                U = torch.sigmoid(torch.matmul(self.m, X) + self.c * torch.sqrt(self.S @ (X**2).T))
+                return U.numpy(force=True)
             elif TS:
                 m = self.m.numpy(force=True)
                 sqrt_S = np.sqrt(self.S.numpy(force=True))
                 for k in range(self.K):
-<<<<<<< HEAD
-                    m[k] += self.nu * np.diag(sqrt_S[k]) @ self.rng.normal(0,1,self.d)
-=======
-                    m[k,:] += self.nu*self.S[k,:].detach().cpu().numpy() * self.rng.normal(0,1,self.d)
->>>>>>> 36a1de93b55372e00768b06fc7f5a03add29cf1c
-                ret = (1 + np.exp(- m @ context))**(-1)
+                    m[k,:] += self.nu * sqrt_S[k,:] * self.rng.normal(0,1,self.d)
+                return (1 + np.exp(- m @ context))**(-1)
             else:
-                ret = torch.sigmoid(torch.matmul(self.m, X)).numpy(force=True)
-                return np.array(ret)
-        return ret
+                return torch.sigmoid(torch.matmul(self.m, X)).numpy(force=True)
                 # return torch.sigmoid(torch.matmul(self.m, X)).numpy(force=True)
     
     def get_uncertainty(self):
-        return self.S.reshape(-1).detach().cpu()
+        return self.S.numpy(force=True).reshape(-1)
 
 class LinearRegression:
     def __init__(self,context_dim, num_items, mode, rng, c=2.0, nu=1.0):

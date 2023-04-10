@@ -299,13 +299,12 @@ class NTKAllocator(Allocator):
             rets = []
             for k in range(self.K):
                 mean = self.nets[k](X).numpy(force=True).squeeze()
-                means.append(mean)
-                bound = self.c * torch.sqrt(((1/self.nets[k].H)*torch.matmul(torch.matmul(g[k].mT,self.Z_inv),g[k])).to(self.device))
+                bound = self.c * torch.sqrt(((1/self.nets[k].H)*torch.matmul(torch.matmul(g[k],self.Z_inv),g[k]))).numpy(force=True)
                 bounds.append(bound)
                 ret = mean + bound
                 rets.append(ret)
             bounds = np.stack(bounds)
-            self.uncertainty = bounds
+            self.uncertainty = bounds.reshape(-1)
         elif TS:
             sigmas = []
             rets = []
