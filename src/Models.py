@@ -93,14 +93,15 @@ class DiagLogisticRegression(torch.nn.Module):
         y = torch.Tensor(outcomes).to(self.device)
 
         epochs = 100
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr, amsgrad=True)
+        lr = 1e-3
+        optimizer = torch.optim.Adam(self.parameters(), lr=lr, amsgrad=True)
 
         for epoch in range(int(epochs)):
             optimizer.zero_grad()
             loss = self.loss(X, A, y, self.S0_inv)
             loss.backward()
             optimizer.step()
-        
+    
         y = self(X, A).numpy(force=True)
         X = contexts.reshape(-1,self.d)
         for k in range(self.K):
@@ -112,7 +113,11 @@ class DiagLogisticRegression(torch.nn.Module):
             S_inv = self.S0_inv.numpy(force=True)
             S_inv += ((X_**2).T @ y_).reshape(-1)
             self.S_inv[k, :] = S_inv
+<<<<<<< HEAD
             self.S = torch.Tensor(1/(S_inv+1e-2)).to(self.device)
+=======
+            self.S[k,:] = torch.Tensor(np.sign(S_inv)/(np.abs(S_inv)+1e-2)).to(self.device)
+>>>>>>> 36a1de93b55372e00768b06fc7f5a03add29cf1c
             
     def loss(self, X, A, y, S0_inv):
         y_pred = self(X, A)
@@ -131,15 +136,20 @@ class DiagLogisticRegression(torch.nn.Module):
                 m = self.m.numpy(force=True)
                 sqrt_S = np.sqrt(self.S.numpy(force=True))
                 for k in range(self.K):
+<<<<<<< HEAD
                     m[k] += self.nu * np.diag(sqrt_S[k]) @ self.rng.normal(0,1,self.d)
+=======
+                    m[k,:] += self.nu*self.S[k,:].detach().cpu().numpy() * self.rng.normal(0,1,self.d)
+>>>>>>> 36a1de93b55372e00768b06fc7f5a03add29cf1c
                 ret = (1 + np.exp(- m @ context))**(-1)
             else:
                 ret = torch.sigmoid(torch.matmul(self.m, X)).numpy(force=True)
+                return np.array(ret)
         return ret
                 # return torch.sigmoid(torch.matmul(self.m, X)).numpy(force=True)
     
     def get_uncertainty(self):
-        return self.S.reshape(-1)
+        return self.S.reshape(-1).detach().cpu()
 
 class LinearRegression:
     def __init__(self,context_dim, num_items, mode, rng, c=2.0, nu=1.0):
@@ -326,6 +336,13 @@ class NeuralRegression(nn.Module):
         self.BCE = nn.BCELoss()
         self.eval()
 
+    def initialize_weights(self):
+        first_init=np.sqrt(4/self.H)*torch.randn((self.H,(self.d//2)-1)).to(self.device)
+        first_init=torch.cat([first_init,torch.zeros(self.H,1).to(self.device),torch.zeros(self.H,1).to(self.device),first_init],axis=1)
+        self.feature.weight.data=first_init 
+        last_init=np.sqrt(2/self.K)*torch.randn((self.K,self.H//2)).to(self.device)
+        self.head.weight.data=torch.cat([last_init,-last_init],axis=1)
+        
     def forward(self, x):
         x = torch.relu(self.feature(x))
         return torch.sigmoid(self.head(x))
