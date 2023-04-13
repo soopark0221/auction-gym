@@ -28,13 +28,13 @@ class Bidder:
 
 class TruthfulBidder(Bidder):
     """ A bidder that bids truthfully """
-    def __init__(self, rng, noise=0.0):
+    def __init__(self, rng, noise=0.1):
         super(TruthfulBidder, self).__init__(rng)
         self.truthful = True
         self.noise = noise
 
-    def bid(self, value, context, estimated_CTR, clock):
-        bid = value * estimated_CTR + self.rng.normal(0,self.noise,1)
+    def bid(self, value, context, estimated_CTR):
+        bid = value * (estimated_CTR + self.rng.normal(0,self.noise,1))
         return bid.item(), 0.0
 
 class DQNBidder(Bidder):
@@ -47,7 +47,7 @@ class DQNBidder(Bidder):
         assert exploration_method in ['Epsilon-greedy', 'Gaussian Noise', 'Bayes by Backprop', 'MC Dropout',
                           'NoisyNet']
         self.method = exploration_method
-        self.gammas = []
+        self.b = []
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         if self.method=='Epsilon-greedy':
@@ -66,16 +66,17 @@ class DQNBidder(Bidder):
             self.winrate_model = NoisyNetWinRateEstimator(context_dim)
         self.winrate_model.to(self.device)
         self.model_initialised = False
-        self.initialize()
+        self.count=0
+        # self.initialize()
     
     def initialize(self):
         X = []
         y = []
         for i in range(500):
             context = self.rng.normal(0.0, 1.0, size=self.context_dim)
-            gamma = self.rng.uniform(0.0, 1.5, 10).reshape(-1,1)
-            y.append((1 + np.exp(-10*(gamma-1.0)))**(-1))
-            X.append(np.concatenate([np.tile(context/np.sqrt(np.sum(context**2)), (10,1)), gamma], axis=-1))
+            b = self.rng.uniform(0.0, 1.5, 10).reshape(-1,1)
+            y.append((1 + np.exp(-10*(b-1.0)))**(-1))
+            X.append(np.concatenate([np.tile(context/np.sqrt(np.sum(context**2)), (10,1)), b], axis=-1))
         self.X_init = np.concatenate(X)
         self.y_init = np.concatenate(y)
         X = torch.Tensor(self.X_init).to(self.device)
@@ -93,42 +94,35 @@ class DQNBidder(Bidder):
             optimizer.step()
         self.winrate_model.eval()
 
-    def bid(self, value, context, estimated_CTR, clock):
+    def bid(self, value, context, estimated_CTR):
         # Compute the bid as expected value
         expected_value = value * estimated_CTR
-        if not self.model_initialised:
-            # If it is the first iteration, collect data with simple initial policy
-            gamma = self.rng.normal(self.gamma_mu, self.gamma_sigma)
-        else:
-            # Grid search over gamma
-            n_values_search = 128
-            gamma_grid = np.linspace(0.1, 1.5 ,n_values_search)
-            x = torch.Tensor(np.hstack([np.tile(context, ((n_values_search, 1))), np.tile(estimated_CTR*value,
-                                        (n_values_search, 1))*gamma_grid.reshape(-1,1)])).to(self.device)
+        # Grid search over gamma
+        n_values_search = int(value*100)
+        b_grid = np.linspace(0.1*value, 1.5*value,n_values_search)
+        x = torch.Tensor(np.hstack([np.tile(context, ((n_values_search, 1))), b_grid.reshape(-1,1)])).to(self.device)
 
-            if self.method=='Bayes by Backprop' or self.method=='NoisyNet':
-                prob_win = self.winrate_model(x, True).numpy(force=True).ravel()
-            elif self.method=='MC Dropout':
-                with torch.no_grad():
-                    prob_win = self.winrate_model(x).numpy(force=True).ravel()
-            else:
+        if self.method=='Bayes by Backprop' or self.method=='NoisyNet':
+            prob_win = self.winrate_model(x, True).numpy(force=True).ravel()
+        elif self.method=='MC Dropout':
+            with torch.no_grad():
                 prob_win = self.winrate_model(x).numpy(force=True).ravel()
+        else:
+            prob_win = self.winrate_model(x).numpy(force=True).ravel()
 
-            shaded_bids = value * gamma_grid
-            estimated_utility = prob_win * (expected_value - shaded_bids)
-            gamma = gamma_grid[np.argmax(estimated_utility)]
+        estimated_utility = prob_win * (expected_value - b_grid)
+        bid = b_grid[np.argmax(estimated_utility)]
         
         if self.method=='Epsilon-greedy' and self.rng.random()<self.eps:
-            gamma = self.rng.uniform(0.1,1.5)
+            bid = self.rng.uniform(0.1*value,1.5*value)
         elif self.method=='Gaussian Noise':
-            gamma = np.clip(gamma+self.rng.normal(0,self.noise), 0.1, 1.5)
+            bid = np.clip(bid+self.rng.normal(0,self.noise)*value, 0.1*value, 1.5*value)
 
-        bid = value*gamma
-        self.gammas.append(gamma)
+        self.b.append(bid)
         return bid, 0.0
 
     def update(self, contexts, values, bids, prices, outcomes, estimated_CTRs, won_mask, utilities, name):
-
+        self.count += 1
         # FALLBACK: if you lost every auction you participated in, your model collapsed
         # Revert to not shading for 1 round, to collect data with informational value
         if not won_mask.astype(np.uint8).sum():
@@ -144,7 +138,7 @@ class DQNBidder(Bidder):
         # Augment data with samples: if you shade 100%, you will lose
         # If you won now, you would have also won if you bid higher
         X = np.hstack((contexts.reshape(-1,self.context_dim), bids.reshape(-1, 1)))
-        X = np.concatenate([X, self.X_init])
+        # X = np.concatenate([X, self.X_init])
         N = X.shape[0]
 
         # X_aug_neg = X.copy()
@@ -154,7 +148,7 @@ class DQNBidder(Bidder):
         X = torch.Tensor(X).to(self.device)
 
         y = won_mask.astype(np.float32).reshape(-1,1)
-        y = np.concatenate([y, self.y_init])
+        # y = np.concatenate([y, self.y_init])
         y = torch.Tensor(y).to(self.device)
         # y = torch.Tensor(np.concatenate((y, np.zeros_like(y)))).to(self.device)
 
@@ -200,7 +194,7 @@ class DQNBidder(Bidder):
         if memory=='inf':
             pass
         else:
-            self.gammas = self.gammas[-memory:]
+            self.b = self.b[-memory:]
     
     def get_uncertainty(self):
         if self.method in ['NoisyNet', 'Bayes by Backprop']:
@@ -607,3 +601,25 @@ class DDPGBidder(Bidder):
             return self.bidding_policy.get_uncertainty()
         else:
             return np.array([0])
+
+class OracleBidder(Bidder):
+    def __init__(self, rng, lr, gamma_mu, gamma_sigma, context_dim, exploration_method):
+        super().__init__(rng)
+        self.b = []
+
+    def bid(self, value, estimated_CTR, prob_win, b_grid):
+        # Compute the bid as expected value
+        expected_value = value * estimated_CTR
+        # Grid search over gamma
+    
+        estimated_utility = prob_win * (expected_value - b_grid)
+        bid = b_grid[np.argmax(estimated_utility)]
+
+        self.b.append(bid)
+        return bid, 0.0
+
+    def clear_logs(self, memory):
+        if memory=='inf':
+            pass
+        else:
+            self.b = self.b[-memory:]

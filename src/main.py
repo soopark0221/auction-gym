@@ -24,7 +24,7 @@ def parse_kwargs(kwargs):
     return ',' + parsed if parsed else ''
 
 
-def parse_agent_config(rng, context_dim, obs_context_dim, item_feature_var, path):
+def parse_agent_config(path):
     with open(path) as f:
         config = json.load(f)
 
@@ -44,27 +44,30 @@ def parse_agent_config(rng, context_dim, obs_context_dim, item_feature_var, path
             agent_configs.append(agent_config)
             num_agents += 1
 
-    # First sample item catalog (so it is consistent over different configs with the same seed)
-    # Agent : (item_embedding, item_value)
+    return agent_configs, output_dir
 
-    agents2items = {}
-    for agent_config in agent_configs:
-        temp = []
-        for k in range(agent_config['num_items']):
-            feature = rng.normal(0.0, 1.0, size=context_dim)
-            temp.append(feature / np.sqrt(np.sum(feature**2)))
-        agents2items[agent_config['name']] = np.stack(temp)
-        
+def draw_features(rng, num_runs, context_dim, agent_configs):
+    run2agents2items = {}
+    run2agents2item_values = {}
+    for run in range(num_runs):
+        agents2items = {}
+        for agent_config in agent_configs:
+            temp = []
+            for k in range(agent_config['num_items']):
+                feature = rng.normal(0.0, 1.0, size=context_dim)
+                temp.append(feature / np.sqrt(np.sum(feature**2)))
+            agents2items[agent_config['name']] = np.stack(temp)
+        run2agents2items[run] = agents2items
 
-    agents2item_values = {
-        agent_config['name']: rng.lognormal(0.1, 0.2, agent_config['num_items'])
-        for agent_config in agent_configs
-    }
+        agents2item_values = {
+            agent_config['name']: rng.lognormal(0.1, 0.2, agent_config['num_items'])
+            for agent_config in agent_configs
+        }
+        run2agents2item_values[run] = agents2item_values
 
-    return agent_configs, agents2items, agents2item_values, output_dir
+    return run2agents2items, run2agents2item_values
 
-
-def instantiate_agents(rng, agent_configs, agents2item_values, agents2items, obs_context_dim, update_schedule, context_dist):
+def instantiate_agents(rng, agent_configs, agents2item_values, agents2items, obs_context_dim, update_interval, context_dist, random_bidding):
     # Store agents to be re-instantiated in subsequent runs
     # Set up agents
     agents = [
@@ -75,7 +78,8 @@ def instantiate_agents(rng, agent_configs, agents2item_values, agents2items, obs
               allocator=eval(f"{agent_config['allocator']['type']}(rng=rng{parse_kwargs(agent_config['allocator']['kwargs'])})"),
               bidder=eval(f"{agent_config['bidder']['type']}(rng=rng{parse_kwargs(agent_config['bidder']['kwargs'])})"),
               context_dim = obs_context_dim,
-              update_schedule=update_schedule,
+              update_interval=update_interval,
+              random_bidding = random_bidding,
               memory=('inf' if 'memory' not in agent_config.keys() else agent_config['memory']))
         for agent_config in agent_configs
     ]
@@ -103,24 +107,6 @@ def instantiate_auction(rng, training_config, agents2items, agents2item_values, 
 
 
 def simulation_run(run):
-    for agent in auction.agents:
-        if agent.name.rfind('Competitor')<0:
-            for i in range(2):
-                context = auction.generate_context()
-                obs_context = context[:obs_context_dim]
-                if isinstance(agent.allocator, OracleAllocator):
-                    item, estimated_CTR = agent.select_item(context)
-                else:
-                    item, estimated_CTR = agent.select_item(obs_context)
-                value = agent.item_values[item]
-                gamma = np.linspace(0.1, 1.5, 128).reshape(-1,1)
-                x = np.concatenate([
-                    np.tile(obs_context, (128, 1)),
-                    np.tile(estimated_CTR*value, (128,1))*gamma
-                ], axis=1)
-                x = torch.Tensor(x).to(agent.bidder.device)
-                y = agent.bidder.winrate_model(x).numpy(force=True).reshape(-1,1)
-                agent2critic_estimation[agent.name].append(np.concatenate([gamma, y], axis=1))
     for i in tqdm(np.arange(1, num_iter+1), desc=f'run {run}'):
         auction.simulate_opportunity()
 
@@ -143,36 +129,18 @@ def simulation_run(run):
                 agent2CTR[agent.name].append(agent.get_CTRs())
 
                 if not isinstance(agent.bidder, TruthfulBidder):
-                    agent2gamma[agent.name].append(np.array(agent.get_gamma()))
+                    agent2bidding[agent.name].append(np.array(agent.get_bid()))
+                    regret.append(auction.get_regret())
 
                 best_expected_value = np.mean([opp.best_expected_value for opp in agent.logs])
                 agent2best_expected_value[agent.name].append(best_expected_value)
 
                 print('Average Best Value for Agent: ', best_expected_value)
                 agent.move_index()
-                
-        if i%(record_interval*3)==0 and i<10000:
-            for agent in auction.agents:
-                if agent.name.rfind('Competitor')<0:
-                    for i in range(2):
-                        context = auction.generate_context()
-                        obs_context = context[:obs_context_dim]
-                        if isinstance(agent.allocator, OracleAllocator):
-                            item, estimated_CTR = agent.select_item(context)
-                        else:
-                            item, estimated_CTR = agent.select_item(obs_context)
-                        value = agent.item_values[item]
-                        gamma = np.linspace(0.1, 1.5, 128).reshape(-1,1)
-                        x = np.concatenate([
-                            np.tile(obs_context, (128, 1)),
-                            np.tile(estimated_CTR*value, (128,1))*gamma
-                        ], axis=1)
-                        x = torch.Tensor(x).to(agent.bidder.device)
-                        y = agent.bidder.winrate_model(x).numpy(force=True).reshape(-1,1)
-                        agent2critic_estimation[agent.name].append(np.concatenate([gamma, y], axis=1))
-
             auction_revenue.append(auction.revenue)
             auction.clear_revenue()
+
+def plot_winrate():
     for agent in auction.agents:
         if agent.name.rfind('Competitor')<0:
             for i in range(2):
@@ -210,7 +178,7 @@ if __name__ == '__main__':
     num_runs = training_config['num_runs']
     num_iter  = training_config['num_iter']
     record_interval = training_config['record_interval']
-    update_schedule = training_config['update_schedule']
+    update_interval = training_config['update_interval']
 
     # Max. number of slots in every auction round
     # Multi-slot is currently not fully supported.
@@ -221,13 +189,13 @@ if __name__ == '__main__':
     item_feature_var = training_config['item_feature_var']
     obs_context_dim = training_config['obs_context_dim']
     context_dist = training_config['context_distribution']
+    random_bidding = training_config['random_bidding']
 
     os.environ["CUDA_VISIBLE_DEVICES"]= args.cuda
     print("running in {}".format('cuda' if torch.cuda.is_available() else 'cpu'))
 
     # Parse configuration file
-    agent_configs, agents2items, agents2item_values, output_dir = parse_agent_config(
-        rng, context_dim, obs_context_dim, item_feature_var, args.config)
+    agent_configs, output_dir = parse_agent_config(args.config)
 
     # Plotting config
     FIGSIZE = (8, 5)
@@ -244,9 +212,9 @@ if __name__ == '__main__':
 
     run2agent2CTR_RMSE = {}
     run2agent2CTR_bias = {}
-    run2agent2gamma = {}
+    run2agent2bidding = {}
 
-    # run2agent2bidding_var = {}
+    # run2agent2biddingding_var = {}
     run2agent2uncertainty = {}
     run2agent2winning_prob = {}
     run2agent2CTR = {}
@@ -254,11 +222,15 @@ if __name__ == '__main__':
     run2agent2critic_estimation = {}
 
     run2auction_revenue = {}
+    run2regret = {}
+
+    run2agents2items, run2agents2item_values = draw_features(rng, num_runs, context_dim, agent_configs)
 
     # Repeated runs
     for run in range(num_runs):
-        # Reinstantiate agents and auction per run
-        agents = instantiate_agents(rng, agent_configs, agents2item_values, agents2items, obs_context_dim, update_schedule, context_dist)
+        agents2items = run2agents2items[run]
+        agents2item_values = run2agents2item_values[run]
+        agents = instantiate_agents(rng, agent_configs, agents2item_values, agents2items, obs_context_dim, update_interval, context_dist, random_bidding)
         auction  = instantiate_auction(
             rng, training_config, agents2items, agents2item_values, agents, max_slots, context_dim, obs_context_dim, context_dist)
         
@@ -273,7 +245,7 @@ if __name__ == '__main__':
 
         agent2CTR_RMSE = defaultdict(list)
         agent2CTR_bias = defaultdict(list)
-        agent2gamma = defaultdict(list)
+        agent2bidding = defaultdict(list)
 
         # agent2bidding_var = defaultdict(list)
         agent2uncertainty = defaultdict(list)
@@ -283,6 +255,7 @@ if __name__ == '__main__':
         agent2critic_estimation = defaultdict(list)
 
         auction_revenue = []
+        regret = []
 
         # Run simulation (with global parameters -- fine for the purposes of this script)
         simulation_run(run)
@@ -298,9 +271,9 @@ if __name__ == '__main__':
 
         run2agent2CTR_RMSE[run] = agent2CTR_RMSE
         run2agent2CTR_bias[run] = agent2CTR_bias
-        run2agent2gamma[run] = agent2gamma
+        run2agent2bidding[run] = agent2bidding
 
-        # run2agent2bidding_var[run] = agent2bidding_var
+        # run2agent2biddingding_var[run] = agent2bidding_var
         run2agent2uncertainty[run] = agent2uncertainty
         run2agent2winning_prob[run] = agent2winning_prob
         run2agent2CTR[run] = agent2CTR
@@ -308,6 +281,7 @@ if __name__ == '__main__':
         run2agent2critic_estimation[run] = agent2critic_estimation
 
         run2auction_revenue[run] = auction_revenue
+        run2regret[run] = regret
 
     output_dir = output_dir + time.strftime('%y%m%d-%H%M%S')
     if not os.path.exists(output_dir):
@@ -463,7 +437,7 @@ if __name__ == '__main__':
     plot_measure_per_agent(run2agent2CTR_RMSE, 'CTR RMSE')
     plot_measure_per_agent(run2agent2CTR_bias, 'CTR Bias', optimal=1.0) #, yrange=(.5, 5.0))
 
-    # bidding_var_df = plot_measure_per_agent(run2agent2bidding_var, 'Variance of Policy')
+    # bidding_var_df = plot_measure_per_agent(run2agent2biddingding_var, 'Variance of Policy')
     # bidding_var_df.to_csv(f'{output_dir}/bidding_variance.csv', index=False)
     # try:
     #     uncertainty_df = plot_vector_measure_per_agent(run2agent2uncertainty, 'Uncertainty in Parameters')
@@ -479,7 +453,8 @@ if __name__ == '__main__':
     CTR_df = plot_vector_measure_per_agent(run2agent2CTR, 'CTR')
     CTR_df.to_csv(f'{output_dir}/CTR.csv', index=False)
     
-    shading_factor_df = plot_vector_measure_per_agent(run2agent2gamma, 'Shading Factors')
+    bidding_df = plot_vector_measure_per_agent(run2agent2bidding, 'Bidding')
+    bidding_df.to_csv(f'{output_dir}/Bidding.csv', index=False)
 
     def measure2df(run2measure, measure_name):
         df_rows = {'Run': [], 'Step': [], measure_name: []}
@@ -517,6 +492,10 @@ if __name__ == '__main__':
         return df
 
     auction_revenue_df = plot_measure_overall(run2auction_revenue, 'Auction Revenue')
+    regret_df = measure2df(run2regret, 'Regret over Interval')
+    regret_df['Regret'] = regret_df.groupby(['Run'])['Regret over Interval'].cumsum()
+    regret_df.to_csv(f'{output_dir}/regret.csv', index=False)
+    plot_measure_overall(regret_df, 'Regret')
 
     net_utility_df_overall = net_utility_df.groupby(['Run', 'Step'])['Net Utility'].sum().reset_index().rename(columns={'Net Utility': 'Social Surplus'})
     plot_measure_overall(net_utility_df_overall, 'Social Surplus')

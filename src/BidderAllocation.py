@@ -356,7 +356,7 @@ class OracleAllocator(Allocator):
         if self.activation=='Linear':
             return 0.5 + 0.5 * context @ self.item_features.T
         else:    # Logistic
-            return sigmoid(context @ self.item_features.T)
+            return sigmoid(context @ self.item_features.T / np.sqrt(self.item_features.shape[1]))
     
     def get_uncertainty(self):
         return np.array([0])

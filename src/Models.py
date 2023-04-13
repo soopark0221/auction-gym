@@ -83,6 +83,8 @@ class DiagLogisticRegression(torch.nn.Module):
 
         self.BCE = torch.nn.BCELoss(reduction='sum')
         self.eval()
+
+        self.uncertainty = []
     
     def forward(self, X, A):
         return torch.sigmoid(torch.sum(X * self.m[A], dim=1))
@@ -126,11 +128,14 @@ class DiagLogisticRegression(torch.nn.Module):
         X = torch.Tensor(context.reshape(-1)).to(self.device)
         with torch.no_grad():
             if UCB:
-                U = torch.sigmoid(torch.matmul(self.m, X) + self.c * torch.sqrt(self.S @ (X**2).T))
+                bound = self.c * torch.sqrt(self.S @ (X**2).T)
+                self.uncertainty.append(bound.item())
+                U = torch.sigmoid(torch.matmul(self.m, X) + bound)
                 return U.numpy(force=True)
             elif TS:
                 m = self.m.numpy(force=True)
                 sqrt_S = np.sqrt(self.S.numpy(force=True))
+                self.uncertainty.append(np.sqrt(np.sum(sqrt_S**2)))
                 for k in range(self.K):
                     m[k,:] += self.nu * sqrt_S[k,:] * self.rng.normal(0,1,self.d)
                 return (1 + np.exp(- m @ context))**(-1)
@@ -138,8 +143,11 @@ class DiagLogisticRegression(torch.nn.Module):
                 return torch.sigmoid(torch.matmul(self.m, X)).numpy(force=True)
                 # return torch.sigmoid(torch.matmul(self.m, X)).numpy(force=True)
     
-    def get_uncertainty(self):
-        return self.S.numpy(force=True).reshape(-1)
+    def get_uncertainty(self, index):
+        if self.mode=='Epsilon-greedy':
+            return np.array([0])
+        else:
+            return np.array(self.uncertainty[index:])
 
 class LinearRegression:
     def __init__(self,context_dim, num_items, mode, rng, c=2.0, nu=1.0):
@@ -193,7 +201,7 @@ class LinearRegression:
         else:
             return self.m @ context
 
-    def get_uncertainty(self):
+    def get_uncertainty(self, index):
         eigvals = [np.linalg.eigvals(self.S[k,:,:]).reshape(-1) for k in range(self.K)]
         return np.concatenate(eigvals).real
 
@@ -220,6 +228,7 @@ class LogisticRegression(nn.Module):
         self.S = torch.Tensor(self.S_inv.copy()).to(self.device)
 
         self.BCE = torch.nn.BCELoss(reduction='sum')
+        self.uncertainty = []
     
     def forward(self, X, A):
         return torch.sigmoid(torch.sum(X * self.m[A], dim=1))

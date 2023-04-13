@@ -1,6 +1,7 @@
 import numpy as np
 
 from BidderAllocation import *
+from Bidder import OracleBidder
 from Impression import ImpressionOpportunity
 from Models import sigmoid
 from Bidder import TruthfulBidder
@@ -9,11 +10,15 @@ from Bidder import TruthfulBidder
 class Agent:
     ''' An agent representing an advertiser '''
 
-    def __init__(self, rng, name, num_items, item_values, allocator, bidder, context_dim, update_schedule, memory):
+    def __init__(self, rng, name, num_items, item_values, allocator, bidder, context_dim, update_interval, random_bidding, memory):
         self.rng = rng
         self.name = name
         self.num_items = num_items
         self.context_dim = context_dim
+        split = random_bidding.split()
+        self.random_bidding_mode = split[0]    # uniform or gaussian noise
+        self.init_num_random_bidding = int(split[1])
+        self.decay_factor = float(split[2])
 
         # Value distribution
         self.item_values = item_values
@@ -25,32 +30,15 @@ class Agent:
         
         self.clock = 0
         self.record_index = 0
-        if update_schedule.split()[0]=='doubling':
-            self.update_schecule = 'doubling'
-            self.exploration_steps = int(update_schedule.split()[1])
-        elif update_schedule.split()[0]=='even':
-            self.update_schecule = 'even'
-            self.update_interval = int(update_schedule.split()[1])
+
+        self.update_interval = update_interval
         self.memory = memory
 
         self.bidding_variance = []
     
     def should_explore(self):
-        if self.update_schecule!='doubling':
-            return False
-        b = 1
-        while self.clock >= b:
-            b = b<<1
-        return self.clock - b>>1 < self.exploration_steps
-    
-    def should_update(self):
-        if self.update_schecule=='doubling':
-            b = 1
-            while self.clock >= b:
-                b = b<<1
-            return self.clock == b>>1 and b>=1024
-        else:
-            return self.clock%self.update_interval==0
+        return self.clock%self.update_interval < \
+            self.init_num_random_bidding/np.power(self.decay_factor, int(self.clock/self.update_interval))
 
     def select_item(self, context):
         # Estimate CTR for all items
@@ -69,7 +57,8 @@ class Agent:
 
         return best_item, estim_CTRs[best_item]
 
-    def bid(self, context):
+    def bid(self, context, prob_win=None, b_grid=None):
+        self.clock += 1
         # First, pick what item we want to choose
         best_item, estimated_CTR = self.select_item(context)
 
@@ -79,13 +68,23 @@ class Agent:
         if isinstance(self.allocator, OracleAllocator):
             context =context[:self.context_dim]
 
-        if self.should_explore():
-            gamma = self.rng.uniform(0.1, 1.5)
+        if isinstance(self.bidder, OracleBidder):
+            bid, variance = self.bidder(value, estimated_CTR, prob_win, b_grid)
+        elif not isinstance(self.allocator, OracleAllocator) and self.should_explore():
+            if self.random_bidding_mode=='uniform':
+                bid = self.rng.uniform(0, value*1.5)
+            elif self.random_bidding_mode=='overbidding-uniform':
+                bid = self.rng.uniform(value*1.0, value*1.5)
+            elif self.random_bidding_mode=='gaussian':
+                bid, variance = self.bidder.bid(value, context, estimated_CTR)
+                bid += value * self.rng.normal(0, 0.5)
+                bid = np.maximum(bid, 0)
             if not isinstance(self.bidder, TruthfulBidder):
-                self.bidder.gammas.append(gamma)
-            bid, variance = gamma*value, 0.0
+                self.bidder.b.append(bid)
+            variance = 0.0
+        
         else:
-            bid, variance = self.bidder.bid(value, context, estimated_CTR, self.clock)
+            bid, variance = self.bidder.bid(value, context, estimated_CTR)
             # if not isinstance(self.allocator, OracleAllocator) and self.allocator.mode=='UCB':
             #     mean_CTR = self.allocator.estimate_CTR(context, UCB=False)
             #     estimated_CTR = mean_CTR[best_item]
@@ -109,7 +108,6 @@ class Agent:
                                                gross_utility=0.0))
         
         self.bidding_variance.append(variance)
-        self.clock += 1
 
         return bid, best_item
 
@@ -123,10 +121,8 @@ class Agent:
         self.logs[-1].set_price(price)
 
     def update(self):
-        # update schedule here
-        if not self.should_update():
+        if self.clock%self.update_interval:
             return
-        
         # Gather relevant logs
         contexts = np.array(list(opp.context for opp in self.logs))
         items = np.array(list(opp.item for opp in self.logs))
@@ -189,8 +185,8 @@ class Agent:
     def get_gross_utility(self):
         return np.sum(list(opp.gross_utility for opp in self.logs[self.record_index:]))
 
-    def get_gamma(self):
-        return np.array(self.bidder.gammas[self.record_index:])
+    def get_bid(self):
+        return np.array(self.bidder.b[self.record_index:])
 
     def get_winning_prob(self):
         return np.mean(list(opp.won for opp in self.logs[self.record_index:]))

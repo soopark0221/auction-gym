@@ -2,9 +2,12 @@ from AuctionAllocation import AllocationMechanism
 from Bidder import Bidder
 
 import numpy as np
+from scipy.stats import norm
 
 from BidderAllocation import OracleAllocator
+from Bidder import OracleBidder
 from Models import sigmoid
+from Impression import ImpressionOpportunity
 
 class Auction:
     ''' Base class for auctions '''
@@ -23,6 +26,9 @@ class Auction:
         self.context_dist = context_dist # Gaussian, Bernoulli, Uniform
         self.gaussian_var = 1.0
         self.bernoulli_p = 0.5
+
+        self.true_winrate = []
+        self.regret = []
 
         self.num_participants_per_round = num_participants_per_round
     
@@ -46,7 +52,7 @@ class Auction:
         if activation=='Linear':
             return 0.5 + 0.5 * context @ item_features.T
         else:    # Logistic
-            return sigmoid(context @ item_features.T)
+            return sigmoid(context @ item_features.T / np.sqrt(self.context_dim))
 
     def simulate_opportunity(self):
         # Sample the number of slots uniformly between [1, max_slots]
@@ -64,17 +70,46 @@ class Auction:
         CTRs = []
         participating_agents_idx = self.rng.choice(len(self.agents), self.num_participants_per_round, replace=False)
         participating_agents = [self.agents[idx] for idx in participating_agents_idx]
+
         for agent in participating_agents:
-            # Get the bid and the allocated item
+            true_CTR = self.CTR(true_context, self.agent2items[agent.name])
+            expected_value = self.agents2item_values[agent.name] * true_CTR
+            best_value = np.max(expected_value)
+
             if isinstance(agent.allocator, OracleAllocator):
                 bid, item = agent.bid(true_context)
+            elif isinstance(agent.bidder, OracleBidder):
+                item, estimated_CTR = agent.select_item(obs_context)
+                value = agent.item_values[item]
+                b_grid = np.linspace(0.1*value, 1.5*value, 100)
+                prob_win = self.winrate_grid(participating_agents, true_context, b_grid)
+                bid, _ = agent.bidder.bid(value, estimated_CTR, prob_win, b_grid)
+                utility = prob_win * (np.max(expected_value) - b_grid)
+                p = self.winrate_point(participating_agents, true_context, bid)
+                self.regret.append(np.max(utility) - p*(expected_value[item] - bid))
+                agent.logs.append(ImpressionOpportunity(context=obs_context,
+                                               item=item,
+                                               estimated_CTR=estimated_CTR,
+                                               value=value,
+                                               bid=bid,
+                                               # These will be filled out later
+                                               best_expected_value=0.0,
+                                               true_CTR=0.0,
+                                               price=0.0,
+                                               second_price=0.0,
+                                               outcome=0,
+                                               won=False,
+                                               utility=0.0,
+                                               gross_utility=0.0))
             else:
                 bid, item = agent.bid(obs_context)
             bids.append(bid)
-            # Compute the true CTRs for items in this agent's catalogue
-            true_CTR = self.CTR(true_context, self.agent2items[agent.name])
-            agent.logs[-1].set_true_CTR(np.max(true_CTR * self.agents2item_values[agent.name]), true_CTR[item])
+            
+            agent.logs[-1].set_true_CTR(best_value, true_CTR[item])
             CTRs.append(true_CTR[item])
+            if not agent.name.startswith('Competitor') and not isinstance(agent.bidder, OracleBidder):
+                regret = self.compute_regret(participating_agents, true_context, bid, expected_value, item)
+                self.regret.append(regret)
         bids = np.array(bids)
         CTRs = np.array(CTRs)
 
@@ -95,9 +130,51 @@ class Auction:
                 else:
                     agent.set_price(price)
             self.revenue += price
-        
         for agent in participating_agents:
             agent.update()
 
+    def winrate_grid(self, agents, context, b_grid):
+        p_grid = np.ones_like(b_grid)
+        for agent in agents:
+            if agent.name.startswith('Competitor'):
+                CTR = agent.allocator.estimate_CTR(context)
+                mean = np.max(CTR*self.agents2item_values[agent.name])
+                std = agent.bidder.noise
+                if std==0:
+                    for (i), b in np.ndenumerate(b_grid):
+                        p_grid[i] *= 0 if mean>b else 1
+                else:
+                    for (i), b in np.ndenumerate(b_grid):
+                        p_grid[i] *= norm.cdf(b, loc=mean, scale=std)
+        return p_grid
+    
+    def winrate_point(self, agents, context, b):
+        p = 1.0
+        for agent in agents:
+            if agent.name.startswith('Competitor'):
+                CTR = agent.allocator.estimate_CTR(context)
+                mean = np.max(CTR*self.agents2item_values[agent.name])
+                std = agent.bidder.noise
+                if std==0:
+                    p *= 0 if mean>b else 1
+                else:
+                    p *= norm.cdf(b, loc=mean, scale=std)
+        return p
+    
+    def compute_regret(self, agents, context, bid, expected_value, item):
+        best_value = np.max(expected_value)
+        b_grid = np.linspace(0.0, 1.5*best_value, 100)
+        p_grid = self.winrate_grid(agents, context, b_grid)
+        utility = p_grid * (np.max(expected_value) - b_grid)
+        p = self.winrate_point(agents, context, bid)
+        return np.max(utility) - p*(expected_value[item] - bid)
+
     def clear_revenue(self):
         self.revenue = 0.0
+    
+    def get_regret(self):
+        for agent in self.agents:
+            if not agent.name.startswith('Competitor'):
+                index = agent.record_index
+                break
+        return np.sum(self.regret[index:])
