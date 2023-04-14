@@ -338,7 +338,7 @@ if __name__ == '__main__':
     parser.add_argument('--cuda', type=str, default='0')
     args = parser.parse_args()
 
-    with open('config/training2.json') as f:
+    with open('config/training.json') as f:
         training_config = json.load(f)
 
     # Set up Random Number Generator
@@ -471,7 +471,7 @@ if __name__ == '__main__':
         os.makedirs(output_dir)
     
     shutil.copy(args.config, os.path.join(output_dir, 'agent_config.json'))
-    shutil.copy('config/training2.json', os.path.join(output_dir, 'training_config.json'))
+    shutil.copy('config/training.json', os.path.join(output_dir, 'training_config.json'))
 
     plot_vector_measure(run2bidding_error, 'Bidding Error')
     plot_vector_measure(run2bidding_optimal, 'Bidding of Optimal Agent')
