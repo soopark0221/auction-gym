@@ -29,6 +29,9 @@ class Auction:
 
         self.true_winrate = []
         self.regret = []
+        self.optimal_bidding = []
+        self.win_optimal = []
+        self.optimal_utility = []
 
         self.num_participants_per_round = num_participants_per_round
     
@@ -100,7 +103,9 @@ class Auction:
                                                outcome=0,
                                                won=False,
                                                utility=0.0,
-                                               gross_utility=0.0))
+                                               gross_utility=0.0,
+                                               optimal_item=(item==np.argmax(expected_value)),
+                                               bidding_error=bid-b_grid[np.argmax(utility)]))
             else:
                 bid, item = agent.bid(obs_context)
             bids.append(bid)
@@ -108,8 +113,12 @@ class Auction:
             agent.logs[-1].set_true_CTR(best_value, true_CTR[item])
             CTRs.append(true_CTR[item])
             if not agent.name.startswith('Competitor') and not isinstance(agent.bidder, OracleBidder):
-                regret = self.compute_regret(participating_agents, true_context, bid, expected_value, item)
+                regret, u_optimal, b_optimal = self.compute_regret(participating_agents, true_context, bid, expected_value, item)
                 self.regret.append(regret)
+                agent.logs[-1].bidding_error = bid - b_optimal
+                self.optimal_bidding.append(b_optimal)
+                self.win_optimal.append(self.winrate_point(participating_agents, true_context, b_optimal))
+                self.optimal_utility.append(u_optimal)
         bids = np.array(bids)
         CTRs = np.array(CTRs)
 
@@ -138,9 +147,11 @@ class Auction:
         for agent in agents:
             if agent.name.startswith('Competitor'):
                 CTR = agent.allocator.estimate_CTR(context)
-                mean = np.max(CTR*self.agents2item_values[agent.name])
-                std = agent.bidder.noise
-                if std==0:
+                expected_value = CTR*self.agents2item_values[agent.name]
+                mean = np.max(expected_value)
+                ind = np.argmax(expected_value)
+                std = agent.bidder.noise * self.agents2item_values[agent.name][ind]
+                if std==0.0:
                     for (i), b in np.ndenumerate(b_grid):
                         p_grid[i] *= 0 if mean>b else 1
                 else:
@@ -163,11 +174,11 @@ class Auction:
     
     def compute_regret(self, agents, context, bid, expected_value, item):
         best_value = np.max(expected_value)
-        b_grid = np.linspace(0.0, 1.5*best_value, 100)
+        b_grid = np.linspace(0.0, 1.0*best_value, 200)
         p_grid = self.winrate_grid(agents, context, b_grid)
-        utility = p_grid * (np.max(expected_value) - b_grid)
+        utility = p_grid * (best_value - b_grid)
         p = self.winrate_point(agents, context, bid)
-        return np.max(utility) - p*(expected_value[item] - bid)
+        return np.max(utility) - p*(expected_value[item] - bid), np.max(utility), b_grid[np.argmax(utility)]
 
     def clear_revenue(self):
         self.revenue = 0.0
@@ -178,3 +189,24 @@ class Auction:
                 index = agent.record_index
                 break
         return np.sum(self.regret[index:])
+    
+    def get_optimal_bidding(self):
+        for agent in self.agents:
+            if not agent.name.startswith('Competitor'):
+                index = agent.record_index
+                break
+        return np.array(self.regret[index:])
+
+    def get_winrate_optimal(self):
+        for agent in self.agents:
+            if not agent.name.startswith('Competitor'):
+                index = agent.record_index
+                break
+        return np.mean(self.win_optimal[index:])
+    
+    def get_optimal_utility(self):
+        for agent in self.agents:
+            if not agent.name.startswith('Competitor'):
+                index = agent.record_index
+                break
+        return np.sum(self.optimal_utility[index:])
