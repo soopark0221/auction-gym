@@ -1,0 +1,41 @@
+{
+    "agents": [ {
+      "name": "Competitor-Truthful",
+      "num_copies": 2,
+      "num_items": 6,
+        "allocator": {
+          "type": "OracleAllocator",
+          "kwargs": {}
+        },
+        "bidder": {
+            "type": "TruthfulBidder",
+            "kwargs": {}
+      }
+    },
+    {
+      "name": "Logistic-TS(1.0)",
+      "num_copies": 1,
+      "num_items": 6,
+        "allocator": {
+          "type": "LogisticAllocator",
+          "kwargs": {
+            "lr": 1e-3,
+            "context_dim": 8,
+            "num_items": 6,
+            "mode": "\"TS\"",
+            "nu": 1.0
+          }
+        },
+        "bidder": {
+          "type": "DefaultBidder",
+          "kwargs": {
+            "lr": 1e-3,
+            "context_dim": 8,
+            "noise": 0.01
+          }
+      },
+      "memory": "inf"
+    }],
+    "output_dir": "results/Logistic-TS/",
+    "network_architecture": "input-16-output"
+  }

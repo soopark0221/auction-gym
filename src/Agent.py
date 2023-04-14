@@ -39,7 +39,7 @@ class Agent:
         self.memory = memory
     
     def should_explore(self):
-        if self.random_bidding_mode=='None':
+        if self.random_bidding_mode=='None' or self.use_optimistic_value:
             return False
         return self.clock%self.update_interval < \
             self.init_num_random_bidding/np.power(self.decay_factor, int(self.clock/self.update_interval))
