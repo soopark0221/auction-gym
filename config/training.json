@@ -1,15 +1,15 @@
 {
-    "random_seed": 42,
+    "random_seed": 0,
     "num_runs": 5,
-    "num_iter" : 50000,
+    "num_iter" : 100000,
     "record_interval": 500,
     "update_interval": 100,
-    "num_participants_per_round": 5,
+    "num_participants_per_round": 3,
     "context_dim": 10,
     "obs_context_dim": 8,
     "item_feature_var": 1.0,
     "context_distribution": "Logistic Gaussian",
-    "random_bidding": "overbidding-uniform 20 1.01",
+    "random_bidding": "overbidding-uniform 50 1.02",
     "allocation": "FirstPrice",
     "network_architecture": "input-16-output"
 } 
