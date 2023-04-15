@@ -240,7 +240,7 @@ def plot_measure_per_agent(run2agent2measure, measure_name, log_y=False, yrange=
             plt.ylim(yrange[0], yrange[1])
         plt.yticks(fontsize=FONTSIZE - 2)
         plt.grid(True, 'major', 'y', ls='--', lw=.5, c='k', alpha=.3)
-        plt.legend(loc='upper left', bbox_to_anchor=(-.05, -.15), fontsize=FONTSIZE-4, ncol=3)
+        plt.legend(loc='upper left', bbox_to_anchor=(-.05, -.15), fontsize=FONTSIZE-4)
         plt.tight_layout()
         plt.savefig(f"{output_dir}/{measure_name.replace(' ', '_')}.png", bbox_inches='tight')
     except Exception as e:

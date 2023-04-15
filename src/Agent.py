@@ -22,7 +22,7 @@ class Agent:
             self.init_num_random_bidding = int(split[1])
             self.decay_factor = float(split[2])
 
-        self.use_optimistic_value = True
+        self.use_optimistic_value = False
 
         # Value distribution
         self.item_values = item_values
@@ -39,16 +39,18 @@ class Agent:
         self.memory = memory
     
     def should_explore(self):
-        if self.random_bidding_mode=='None' or self.use_optimistic_value:
-            return False
-        return self.clock%self.update_interval < \
-            self.init_num_random_bidding/np.power(self.decay_factor, int(self.clock/self.update_interval))
+        if (self.allocator.mode=='TS' or self.allocator.mode=='UCB') and self.use_optimistic_value:
+            return self.clock%self.update_interval < \
+            self.init_num_random_bidding/np.power(self.decay_factor, int(self.clock/self.update_interval))/4
+        else:
+            return self.clock%self.update_interval < \
+                self.init_num_random_bidding/np.power(self.decay_factor, int(self.clock/self.update_interval))
 
     def select_item(self, context):
         # Estimate CTR for all items
-        if not isinstance(self.allocator, OracleAllocator) and self.allocator.mode=='UCB' and self.use_optimistic_value:
+        if not isinstance(self.allocator, OracleAllocator) and self.allocator.mode=='UCB':
             estim_CTRs = self.allocator.estimate_CTR(context, UCB=True)
-        elif not isinstance(self.allocator, OracleAllocator) and self.allocator.mode=='TS' and self.use_optimistic_value:
+        elif not isinstance(self.allocator, OracleAllocator) and self.allocator.mode=='TS':
             estim_CTRs = self.allocator.estimate_CTR(context, TS=True)
         else:
             estim_CTRs = self.allocator.estimate_CTR(context)
