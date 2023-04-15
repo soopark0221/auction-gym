@@ -89,13 +89,22 @@ class Agent:
             if not isinstance(self.bidder, TruthfulBidder):
                 self.bidder.b.append(bid)
         else:
-            bid = self.bidder.bid(value, context, estimated_CTR)
-            if not isinstance(self.allocator, OracleAllocator) and self.allocator.mode=='UCB' and self.use_optimistic_value:
+            if not isinstance(self.allocator, OracleAllocator) and self.allocator.mode=='UCB':
                 mean_CTR = self.allocator.estimate_CTR(context, UCB=False)
                 estimated_CTR = mean_CTR[best_item]
-            elif not isinstance(self.allocator, OracleAllocator) and self.allocator.mode=='TS' and self.use_optimistic_value:
+                if self.use_optimistic_value:
+                    bid = self.bidder.bid(value, context, optimistic_CTR)
+                else:
+                    bid = self.bidder.bid(value, context, estimated_CTR)
+            elif not isinstance(self.allocator, OracleAllocator) and self.allocator.mode=='TS':
                 mean_CTR = self.allocator.estimate_CTR(context, TS=False)
                 estimated_CTR = mean_CTR[best_item]
+                if self.use_optimistic_value:
+                    bid = self.bidder.bid(value, context, optimistic_CTR)
+                else:
+                    bid = self.bidder.bid(value, context, estimated_CTR)
+            else:
+                bid = self.bidder.bid(value, context, estimated_CTR)
 
         # Log what we know so far
         self.logs.append(ImpressionOpportunity(context=context,
