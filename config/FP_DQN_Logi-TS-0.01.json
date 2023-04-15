@@ -13,7 +13,7 @@
       }
     },
     {
-      "name": "Logistic-TS(5.0)",
+      "name": "Logistic-TS(0.05)",
       "num_copies": 1,
       "num_items": 6,
         "allocator": {
@@ -23,7 +23,7 @@
             "context_dim": 8,
             "num_items": 6,
             "mode": "\"TS\"",
-            "nu": 5.0
+            "nu": 0.05
           }
         },
         "bidder": {
