@@ -21,7 +21,8 @@
           "kwargs": {
             "context_dim": 8,
             "num_items": 12,
-            "mode": "\"TS\""
+            "mode": "\"TS\"",
+            "lr":0.001
           }
         },
         "bidder": {

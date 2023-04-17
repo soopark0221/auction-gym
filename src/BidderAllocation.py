@@ -230,7 +230,7 @@ class NTKAllocator(Allocator):
         self.uncertainty = np.zeros((self.K,))
 
         self.c = c
-        self.nu = 0.1
+        self.nu = nu
         self.count = 0
 
     def update(self, contexts, items, outcomes, name):
@@ -261,7 +261,7 @@ class NTKAllocator(Allocator):
             for k in range(self.K):
                 mean = self.nets[k](X).numpy(force=True).squeeze()
                 means.append(mean)
-                bound = self.c * torch.sqrt(((1/self.nets[k].H)*torch.matmul(torch.matmul(g[k].mT,self.Z_inv),g[k])).to(self.device))
+                bound = self.c * torch.sqrt(((1/self.nets[k].H)*torch.matmul(torch.matmul(g[k].T,self.Z_inv),g[k])).to(self.device))
                 bounds.append(bound)
                 ret = mean + bound
                 rets.append(ret)
@@ -272,14 +272,14 @@ class NTKAllocator(Allocator):
             rets = []
             for k in range(self.K):
                 mean = self.nets[k](X).numpy(force=True).squeeze()
-                sigma = torch.sqrt(((1/self.nets[k].H)*torch.matmul(torch.matmul(g[k].mT,self.Z_inv),g[k])).to(self.device)).numpy(force=True)
+                sigma = torch.sqrt(((1/self.nets[k].H)*torch.matmul(torch.matmul(g[k].T,self.Z_inv),g[k])).to(self.device)).numpy(force=True)
                 ret =  mean + self.nu * sigma * self.rng.normal(0,1)
                 rets.append(ret)
                 sigmas.append(sigma)
 
             self.uncertainty = np.stack(sigmas)
         max_k = np.argmax(rets)
-        self.Z += torch.matmul(g[max_k],g[max_k].mT).to(self.device)/self.nets[k].H
+        self.Z += torch.matmul(g[max_k],g[max_k].T).to(self.device)/self.nets[k].H
         self.Z_inv = torch.inverse(torch.diag(torch.diag(self.Z))) 
         return rets
 

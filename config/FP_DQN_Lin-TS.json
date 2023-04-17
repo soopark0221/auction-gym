@@ -22,7 +22,8 @@
             "context_dim": 8,
             "num_items": 12,
             "mode": "\"TS\"",
-            "c": 5.0
+            "c": 5.0,
+            "lr":0.001
           }
         },
         "bidder": {
