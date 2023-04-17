@@ -84,28 +84,12 @@ class Auction:
             elif isinstance(agent.bidder, OracleBidder):
                 item, estimated_CTR = agent.select_item(obs_context)
                 value = agent.item_values[item]
-                b_grid = np.linspace(0.1*value, 1.5*value, 100)
+                b_grid = np.linspace(0.1*value, 1.5*value, 200)
                 prob_win = self.winrate_grid(participating_agents, true_context, b_grid)
-                bid, _ = agent.bidder.bid(value, estimated_CTR, prob_win, b_grid)
+                bid, item = agent.bid(obs_context, value, prob_win, b_grid)
                 utility = prob_win * (np.max(expected_value) - b_grid)
                 p = self.winrate_point(participating_agents, true_context, bid)
                 self.regret.append(np.max(utility) - p*(expected_value[item] - bid))
-                agent.logs.append(ImpressionOpportunity(context=obs_context,
-                                               item=item,
-                                               estimated_CTR=estimated_CTR,
-                                               value=value,
-                                               bid=bid,
-                                               # These will be filled out later
-                                               best_expected_value=0.0,
-                                               true_CTR=0.0,
-                                               price=0.0,
-                                               second_price=0.0,
-                                               outcome=0,
-                                               won=False,
-                                               utility=0.0,
-                                               gross_utility=0.0,
-                                               optimal_item=(item==np.argmax(expected_value)),
-                                               bidding_error=bid-b_grid[np.argmax(utility)]))
             else:
                 bid, item = agent.bid(obs_context)
             bids.append(bid)

@@ -603,7 +603,7 @@ class DDPGBidder(Bidder):
             return np.array([0])
 
 class OracleBidder(Bidder):
-    def __init__(self, rng, lr, gamma_mu, gamma_sigma, context_dim, exploration_method):
+    def __init__(self, rng):
         super().__init__(rng)
         self.b = []
 

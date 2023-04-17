@@ -112,7 +112,7 @@ def simulation_run(run):
         if agent.name.rfind('Competitor')<0:
             target_agent = agent
 
-    plot_winrate(target_agent)
+    # plot_winrate(target_agent)
 
     for i in tqdm(np.arange(1, num_iter+1), desc=f'run {run}'):
         auction.simulate_opportunity()
@@ -147,8 +147,8 @@ def simulation_run(run):
                 agent.move_index()
             auction_revenue.append(auction.revenue)
             auction.clear_revenue()
-        if i%int(num_iter/5)==0:
-            plot_winrate(target_agent)
+        # if i%int(num_iter/5)==0:
+        #     plot_winrate(target_agent)
 
 def plot_winrate(agent):
     global auction, obs_context_dim
@@ -530,7 +530,7 @@ if __name__ == '__main__':
     regret_df.to_csv(f'{output_dir}/regret.csv', index=False)
     plot_measure(regret_df, 'Regret')
 
-    plot_winrate_estimation(run2winrate_estimation)
+    # plot_winrate_estimation(run2winrate_estimation)
 
     # net_utility_df_overall = utility_df.groupby(['Run', 'Step'])['Net Utility'].sum().reset_index().rename(columns={'Net Utility': 'Social Surplus'})
     # plot_measure(net_utility_df_overall, 'Social Surplus')

@@ -39,6 +39,8 @@ class Agent:
         self.memory = memory
     
     def should_explore(self):
+        if isinstance(self.bidder, OracleBidder):
+            return False
         if (self.allocator.mode=='TS' or self.allocator.mode=='UCB') and self.use_optimistic_value:
             return self.clock%self.update_interval < \
             self.init_num_random_bidding/np.power(self.decay_factor, int(self.clock/self.update_interval))/4
@@ -63,7 +65,7 @@ class Agent:
 
         return best_item, estim_CTRs[best_item]
 
-    def bid(self, context, prob_win=None, b_grid=None):
+    def bid(self, context, value=None, prob_win=None, b_grid=None):
         self.clock += 1
         # First, pick what item we want to choose
         best_item, estimated_CTR = self.select_item(context)
@@ -76,7 +78,7 @@ class Agent:
             context =context[:self.context_dim]
 
         if isinstance(self.bidder, OracleBidder):
-            bid = self.bidder(value, estimated_CTR, prob_win, b_grid)
+            bid = self.bidder.bid(value, estimated_CTR, prob_win, b_grid)
         elif not isinstance(self.allocator, OracleAllocator) and self.should_explore():
             if self.random_bidding_mode=='uniform':
                 bid = self.rng.uniform(0, value*1.5)

@@ -1,0 +1,40 @@
+{
+    "agents": [ {
+      "name": "Competitor-Truthful",
+      "num_copies": 4,
+      "num_items": 6,
+        "allocator": {
+          "type": "OracleAllocator",
+          "kwargs": {}
+        },
+        "bidder": {
+            "type": "TruthfulBidder",
+            "kwargs": {
+              "noise": 0.1
+            }
+      }
+    },
+    {
+      "name": "Logistic-eps(0.01)",
+      "num_copies": 1,
+      "num_items": 6,
+        "allocator": {
+          "type": "LogisticAllocator",
+          "kwargs": {
+            "lr": 1e-3,
+            "context_dim": 8,
+            "num_items": 6,
+            "mode": "\"Epsilon-greedy\"",
+            "eps": 0.01
+          }
+        },
+        "bidder": {
+            "type": "OracleBidder",
+            "kwargs": {
+            }
+      },
+      "memory": "inf"
+    }],
+    "output_dir": "results/Logistic-eps/",
+    "network_architecture": "input-16-output"
+  }
