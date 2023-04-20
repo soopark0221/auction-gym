@@ -219,7 +219,7 @@ def plot_measure_per_agent(run2agent2measure, measure_name, log_y=False, yrange=
         df = measure_per_agent2df(run2agent2measure, measure_name)
     else:
         df = run2agent2measure
-
+    df = df.reset_index(drop=True)
     try:
         fig, axes = plt.subplots(figsize=FIGSIZE)
         plt.title(f'{measure_name} Over Time', fontsize=FONTSIZE + 2)
@@ -244,6 +244,8 @@ def plot_measure_per_agent(run2agent2measure, measure_name, log_y=False, yrange=
         plt.tight_layout()
         plt.savefig(f"{output_dir}/{measure_name.replace(' ', '_')}.png", bbox_inches='tight')
     except Exception as e:
+        print(run2agent2measure)
+        print(run2agent2measure.index.duplicated())
         print('cannot plot', e)
     return df
 
@@ -309,6 +311,7 @@ def plot_measure(run2measure, measure_name, hue=None):
         df = measure2df(run2measure, measure_name)
     else:
         df = run2measure
+    df = df.reset_index(drop=True)
 
     fig, axes = plt.subplots(figsize=FIGSIZE)
     plt.title(f'{measure_name} Over Time', fontsize=FONTSIZE + 2)
@@ -341,6 +344,7 @@ if __name__ == '__main__':
     with open('config/training.json') as f:
         training_config = json.load(f)
 
+
     # Set up Random Number Generator
     rng = np.random.default_rng(training_config['random_seed'])
     np.random.seed(training_config['random_seed'])
@@ -366,7 +370,12 @@ if __name__ == '__main__':
 
     # Parse configuration file
     agent_configs, output_dir = parse_agent_config(args.config)
-
+    output_dir = output_dir + time.strftime('%y%m%d-%H%M%S')
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    
+    shutil.copy(args.config, os.path.join(output_dir, 'agent_config.json'))
+    shutil.copy('config/training.json', os.path.join(output_dir, 'training_config.json'))
     # Plotting config
     FIGSIZE = (8, 5)
     FONTSIZE = 14
@@ -466,12 +475,7 @@ if __name__ == '__main__':
         run2utility_optimal[run] = utility_optimal
         run2optimistic_CTR_ratio[run] = optimistic_CTR_ratio
 
-    output_dir = output_dir + time.strftime('%y%m%d-%H%M%S')
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-    
-    shutil.copy(args.config, os.path.join(output_dir, 'agent_config.json'))
-    shutil.copy('config/training.json', os.path.join(output_dir, 'training_config.json'))
+
 
     plot_vector_measure(run2bidding_error, 'Bidding Error')
     plot_vector_measure(run2bidding_optimal, 'Bidding of Optimal Agent')
@@ -483,10 +487,11 @@ if __name__ == '__main__':
     utility_df = pd.concat([utility_df, optimal_utility_df]).sort_values(['Agent', 'Run', 'Step'])
     utility_df['Utility (Cumulative)'] = utility_df.groupby(['Agent', 'Run'])['Utility'].cumsum()
     plot_measure_per_agent(utility_df, 'Utility')
+
     plot_measure_per_agent(utility_df, 'Utility (Cumulative)')
     utility_df.to_csv(f'{output_dir}/net_utility.csv', index=False)
 
-    plot_measure_per_agent(run2agent2best_expected_value, 'Mean Expected Value for Top Ad')
+    plot_measure_per_agent(run2agent2best_expected_value, '')
 
     allocation_regret_df = plot_measure_per_agent(run2agent2allocation_regret, 'Allocation Regret')
     allocation_regret_df.to_csv(f'{output_dir}/allocation_regret.csv', index=False)
@@ -534,4 +539,3 @@ if __name__ == '__main__':
 
     # net_utility_df_overall = utility_df.groupby(['Run', 'Step'])['Net Utility'].sum().reset_index().rename(columns={'Net Utility': 'Social Surplus'})
     # plot_measure(net_utility_df_overall, 'Social Surplus')
-
