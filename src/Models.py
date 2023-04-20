@@ -242,11 +242,11 @@ class LogisticRegression(nn.Module):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.lr, amsgrad=True)
 
         for epoch in range(int(epochs)):
-                optimizer.zero_grad()
-                loss = self.loss(X, A, y, self.S0_inv)
-                loss.backward()
-                optimizer.step()
-        
+            optimizer.zero_grad()
+            loss = self.loss(X, A, y, self.S0_inv)
+            loss.backward()
+            optimizer.step()
+    
         y = self(X, A).numpy(force=True)
         X = contexts.reshape(-1,self.d)
         for k in range(self.K):
@@ -257,7 +257,8 @@ class LogisticRegression(nn.Module):
             y_ = y_ * (1 - y_)
             S_inv = self.S0_inv.numpy(force=True)
             for n in range(N):
-                S_inv += y_[n] * X_[n,:].reshape(-1,1) @ X_[n,:].reshape(1,-1)
+                x = y_[n] * X_[n,:].reshape(-1,1) @ X_[n,:].reshape(1,-1)
+                S_inv += x
             self.S_inv[k,:,:] = S_inv
 
             S = np.linalg.inv(S_inv)
@@ -292,7 +293,96 @@ class LogisticRegression(nn.Module):
         S_ = self.S.numpy(force=True)
         eigvals = [np.linalg.eigvals(S_[k,:,:]).reshape(-1) for k in range(self.K)]
         return np.concatenate(eigvals).real
-       
+
+class LogisticRegressionM(nn.Module):
+    def __init__(self, context_dim, num_items, mode, rng, lr, c=1.0, nu=1.0):
+        super().__init__()
+        self.rng = rng
+        self.mode = mode
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.lr = lr
+
+        self.K = num_items
+        self.d = context_dim
+        self.h = 3
+        self.c = c
+        self.nu = nu
+
+        self.o = nn.Parameter(torch.randn((self.K, self.h)), requires_grad=False)
+        self.M = nn.Parameter(torch.Tensor(self.h, self.d))
+        nn.init.kaiming_uniform_(self.M)
+
+        self.BCE = torch.nn.BCELoss(reduction='sum')
+        self.uncertainty = []
+        self.S0_inv = torch.Tensor(np.eye(self.h*self.d)).to(self.device)
+        self.S_inv = torch.Tensor(np.eye(self.h*self.d)).to(self.device)
+        self.S = torch.Tensor(np.eye(self.h*self.d)).to(self.device)
+
+    def forward(self, X, A):
+        return torch.sigmoid(torch.sum(F.linear(X, self.M)*self.o[A], dim=1))
+    
+    def update(self, contexts, items, outcomes, name):
+        X = torch.Tensor(contexts).to(self.device)
+        A = torch.LongTensor(items).to(self.device)
+        y = torch.Tensor(outcomes).to(self.device)
+
+        epochs = 100
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr, amsgrad=True)
+
+        for epoch in range(int(epochs)):
+            optimizer.zero_grad()
+            loss = self.loss(X, A, y, self.S0_inv)
+            loss.backward()
+            optimizer.step()
+    
+        y = self(X, A).numpy(force=True)
+        X = contexts.reshape(-1,self.d)
+        self.S_inv = self.S0_inv
+        for k in range(self.K):
+            mask = items==k
+            y_ = y[mask]
+            X_ = X[mask,:]
+            N = y_.shape[0]
+            y_ = y_ * (1 - y_)
+            for n in range(N):
+                # S = S0_inv + sum(y(1-y) x M x M_t)
+                self.S_inv += y_[n] * (self.flatten(self.M) @ self.flatten(self.M).T)
+        self.S = torch.inverse(self.S_inv)
+
+    def loss(self, X, A, y, S0_inv):
+        y_pred = self(X, A)
+        m = self.flatten(self.M).clone()
+        loss_t = self.BCE(y_pred, y) # + torch.sum(m.T @ S0_inv @ m/2)  # to do: backward twice 
+        return loss_t
+    
+    def estimate_CTR(self, context, UCB=False, TS=False):
+        X = torch.Tensor(context.reshape(-1)).to(self.device)
+        with torch.no_grad():
+            if UCB:
+                m = self.flatten(self.M)
+                bound  = self.c * torch.sqrt(m.T @ self.S @ m)
+                U = torch.sigmoid(torch.matmul(self.o, torch.matmul(self.M, X) + bound))
+                return U.numpy(force=True)
+            elif TS:
+                m = self.flatten(self.M)
+                m += self.nu * torch.sqrt(self.S) @ torch.tensor(self.rng.normal(0,1,self.d*self.h)) # dh
+                m = self.unflatten(m, self.h, self.d)
+                out = torch.sigmoid(torch.matmul(self.o, torch.matmul(m, X)))
+                return out.numpy(force=True)
+            else:
+                return torch.sigmoid(torch.matmul(self.o, torch.matmul(self.M, X))).numpy(force=True)
+
+    def get_uncertainty(self):
+        S_ = self.S.numpy(force=True)
+        eigvals = np.linalg.eigvals(S_).reshape(-1)
+        return eigvals.real
+
+    def flatten(self, tensor):
+        return torch.reshape(tensor, (tensor.shape[0]*tensor.shape[1], -1))
+    
+    def unflatten(self, tensor, x, y):
+        return torch.reshape(tensor, (x, y))
+
 class BayesianNeuralRegression(nn.Module):
     def __init__(self, n_dim, n_items, prior_var):
         super().__init__()

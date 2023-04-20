@@ -188,6 +188,53 @@ class LogisticAllocator(Allocator):
     def get_uncertainty(self):
         return self.model.get_uncertainty()
 
+class LogisticAllocatorM(Allocator):
+    def __init__(self, rng, lr, context_dim, num_items, mode, c=0.0, eps=0.1, nu=0.0):
+        super().__init__(rng)
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.mode = mode
+        self.lr = lr
+
+        self.K = num_items
+        self.d = context_dim
+        self.c = c
+        self.eps = eps
+        self.nu = nu
+        if self.mode=='UCB':
+            self.model = LogisticRegressionM(self.d, self.K, self.mode, self.rng, self.lr, c=self.c).to(self.device)
+        elif self.mode=='TS':
+            self.model = LogisticRegressionM(self.d, self.K, self.mode, self.rng, self.lr, nu=self.nu).to(self.device)
+        else:
+            self.model = LogisticRegressionM(self.d, self.K, self.mode, self.rng, self.lr).to(self.device)
+        temp = [np.identity(self.d) for _ in range(self.K)]
+        self.S0_inv = torch.Tensor(np.identity(self.d)).to(self.device)
+        self.S_inv = np.stack(temp)
+        self.S = torch.Tensor(self.S_inv.copy()).to(self.device)
+
+        # self.initialize()
+    
+    def initialize(self):
+        X = []
+        for i in range(1000):
+            context = self.rng.normal(0.0, 1.0, size=self.d)
+            X.append(context/np.sqrt(np.sum(context**2)))
+        X = np.stack(X)
+        y = np.ones((1000,))
+        A = self.rng.choice(self.K, (1000,))
+
+        self.update(X, A, y, "")
+
+    def update(self, contexts, items, outcomes, name):
+        self.model.update(contexts, items, outcomes, name)
+
+    def estimate_CTR(self, context, UCB=False, TS=False):
+        return self.model.estimate_CTR(context, UCB, TS)
+
+    def get_uncertainty(self):
+        return self.model.get_uncertainty()
+
+
+
 class NeuralLinearAllocator(Allocator):
     def __init__(self, rng, lr, context_dim, num_items, mode, c=1.0, eps=0.1, nu=0.1):
         super().__init__(rng)
