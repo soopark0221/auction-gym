@@ -337,7 +337,7 @@ class LogisticRegressionM(nn.Module):
     
         y = self(X, A).numpy(force=True)
         X = contexts.reshape(-1,self.d)
-        self.S_inv = self.S0_inv
+        S_inv = self.S0_inv
         for k in range(self.K):
             mask = items==k
             y_ = y[mask]
@@ -345,27 +345,32 @@ class LogisticRegressionM(nn.Module):
             N = y_.shape[0]
             y_ = y_ * (1 - y_)
             for n in range(N):
-                # S = S0_inv + sum(y(1-y) x M x M_t)
-                self.S_inv += y_[n] * (self.flatten(self.M) @ self.flatten(self.M).T)
-        self.S = torch.inverse(self.S_inv)
+                # S_inv = S0_inv + sum(y(1-y) x M x M_t)
+                m = self.M.detach().clone()
+                m = self.flatten(m)
+                S_inv += y_[n] * (m @ m.T)
+        self.S = torch.inverse(torch.diag(torch.diag(S_inv)))  # torch.inverse(self.S_inv) # 
 
     def loss(self, X, A, y, S0_inv):
         y_pred = self(X, A)
-        m = self.flatten(self.M).clone()
-        loss_t = self.BCE(y_pred, y) # + torch.sum(m.T @ S0_inv @ m/2)  # to do: backward twice 
+        m = self.M.detach().clone()
+        m = self.flatten(m)
+        loss_t = self.BCE(y_pred, y)  + torch.sum(m.T @ S0_inv @ m/2)  
         return loss_t
     
     def estimate_CTR(self, context, UCB=False, TS=False):
         X = torch.Tensor(context.reshape(-1)).to(self.device)
         with torch.no_grad():
             if UCB:
-                m = self.flatten(self.M)
+                m = self.M.detach().clone()
+                m = self.flatten(m)
                 bound  = self.c * torch.sqrt(m.T @ self.S @ m)
                 U = torch.sigmoid(torch.matmul(self.o, torch.matmul(self.M, X) + bound))
                 return U.numpy(force=True)
             elif TS:
-                m = self.flatten(self.M)
-                m += self.nu * torch.sqrt(self.S) @ torch.tensor(self.rng.normal(0,1,self.d*self.h)) # dh
+                m = self.M.detach().clone()
+                m = self.flatten(m)
+                m += self.nu * (torch.sqrt(self.S).float() @ torch.tensor(self.rng.normal(0,1,self.d*self.h)).float().to(self.device)).unsqueeze(1) # dh
                 m = self.unflatten(m, self.h, self.d)
                 out = torch.sigmoid(torch.matmul(self.o, torch.matmul(m, X)))
                 return out.numpy(force=True)

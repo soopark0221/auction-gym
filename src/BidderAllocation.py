@@ -206,11 +206,6 @@ class LogisticAllocatorM(Allocator):
             self.model = LogisticRegressionM(self.d, self.K, self.mode, self.rng, self.lr, nu=self.nu).to(self.device)
         else:
             self.model = LogisticRegressionM(self.d, self.K, self.mode, self.rng, self.lr).to(self.device)
-        temp = [np.identity(self.d) for _ in range(self.K)]
-        self.S0_inv = torch.Tensor(np.identity(self.d)).to(self.device)
-        self.S_inv = np.stack(temp)
-        self.S = torch.Tensor(self.S_inv.copy()).to(self.device)
-
         # self.initialize()
     
     def initialize(self):

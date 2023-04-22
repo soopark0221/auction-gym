@@ -9,13 +9,11 @@
         },
         "bidder": {
             "type": "TruthfulBidder",
-            "kwargs": {
-              "noise": 0.1
-            }
+            "kwargs": {}
       }
     },
     {
-      "name": "LogisticM-eps(0.0)",
+      "name": "LogisticM-TS(0.1)",
       "num_copies": 1,
       "num_items": 10,
         "allocator": {
@@ -24,8 +22,8 @@
             "lr": 1e-3,
             "context_dim": 5,
             "num_items": 10,
-            "mode": "\"Epsilon-greedy\"",
-            "eps": 0.1
+            "mode": "\"TS\"",
+            "nu": 0.1
           }
         },
         "bidder": {
@@ -38,6 +36,6 @@
       },
       "memory": "inf"
     }],
-    "output_dir": "results/LogisticM-eps/",
+    "output_dir": "results/LogisticM-TS/",
     "network_architecture": "input-16-output"
   }
