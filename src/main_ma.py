@@ -138,8 +138,9 @@ def simulation_run(run, multi_auctions):
 
                     best_expected_value = np.mean([opp.best_expected_value for opp in agent.logs[j]])
                     auction2agent2best_expected_value[j][agent.name].append(best_expected_value)
-                    agent.move_index(j)
-                auction_revenue.append(auction.revenue)
+                    if j == len(multi_auctions)-1:
+                        agent.move_index(j)
+                auction_revenue[j].append(auction.revenue)
                 auction.clear_revenue()
         # if i%int(num_iter/5)==0:
         #     plot_winrate(target_agent)
@@ -166,8 +167,8 @@ def plot_winrate(agent):
 def measure_per_agent2df(run2agent2measure, measure_name):
         df_rows = {'Run': [], 'Auction': [], 'Agent': [], 'Step': [], measure_name: []}
         for run, agent2measure in run2agent2measure.items():
-            for auction, agent in agent2measure.items():
-                for agent, measures in agent2measure.items():
+            for auction, agents in agent2measure.items():
+                for agent, measures in agents.items():
                     for step, measure in enumerate(measures):
                         df_rows['Run'].append(run)
                         df_rows['Auction'].append(auction)
@@ -177,14 +178,17 @@ def measure_per_agent2df(run2agent2measure, measure_name):
         return pd.DataFrame(df_rows)
     
 def vector_of_measure2df(run2vector_measure, measure_name):
-    df_rows = {'Run': [], 'Step': [], 'Index':[], measure_name: []}
+    df_rows = {'Run': [], 'Auction': [], 'Step': [], 'Index':[], measure_name: []}
     for run, vector_measures in run2vector_measure.items():
-        for step, vector in enumerate(vector_measures):
-            for (index), measure in np.ndenumerate(vector):
-                df_rows['Run'].append(run)
-                df_rows['Step'].append(step)
-                df_rows['Index'].append(index)
-                df_rows[measure_name].append(measure)
+        for i, auction in enumerate(vector_measures):
+            print(auction)
+            for step, vector in enumerate(auction):
+                for (index), measure in np.ndenumerate(vector):
+                    df_rows['Run'].append(run)
+                    df_rows['Auction'].append(i)
+                    df_rows['Step'].append(step)
+                    df_rows['Index'].append(index)
+                    df_rows[measure_name].append(measure)
     return pd.DataFrame(df_rows)
 
 def full_measure2df(run2measure, measure_name):
@@ -293,12 +297,14 @@ def plot_winrate_estimation(run2winrate_estim):
     return df
 
 def measure2df(run2measure, measure_name):
-    df_rows = {'Run': [], 'Step': [], measure_name: []}
+    df_rows = {'Run': [], 'Auction': [], 'Step': [], measure_name: []}
     for run, measures in run2measure.items():
-        for iteration, measure in enumerate(measures):
-            df_rows['Run'].append(run)
-            df_rows['Step'].append(iteration)
-            df_rows[measure_name].append(measure)
+        for i, auction in enumerate(measures):
+            for iteration, measure in enumerate(auction):
+                df_rows['Run'].append(run)
+                df_rows['Auction'].append(i)
+                df_rows['Step'].append(iteration)
+                df_rows[measure_name].append(measure)
     return pd.DataFrame(df_rows)
 
 def plot_measure(run2measure, measure_name, hue=None):
@@ -307,7 +313,7 @@ def plot_measure(run2measure, measure_name, hue=None):
         df = measure2df(run2measure, measure_name)
     else:
         df = run2measure
-    df = df.reset_index(drop=True)
+    df = df.reset_index()
 
     fig, axes = plt.subplots(figsize=FIGSIZE)
     plt.title(f'{measure_name} Over Time', fontsize=FONTSIZE + 2)
@@ -486,10 +492,9 @@ if __name__ == '__main__':
     utility_df = measure_per_agent2df(run2agent2net_utility, 'Utility')
     optimal_utility_df = measure2df(run2utility_optimal, 'Utility')
     optimal_utility_df['Agent'] = 'Optimal'
-    utility_df = pd.concat([utility_df, optimal_utility_df]).sort_values(['Agent', 'Run', 'Step'])
-    utility_df['Utility (Cumulative)'] = utility_df.groupby(['Agent', 'Run'])['Utility'].cumsum()
+    utility_df = pd.concat([utility_df, optimal_utility_df]).sort_values(['Agent', 'Run', 'Step', 'Auction'])
+    utility_df['Utility (Cumulative)'] = utility_df.groupby(['Agent', 'Run', 'Auction'])['Utility'].cumsum()
     plot_measure_per_agent(utility_df, 'Utility')
-
     plot_measure_per_agent(utility_df, 'Utility (Cumulative)')
     utility_df.to_csv(f'{output_dir}/net_utility.csv', index=False)
 
@@ -514,7 +519,7 @@ if __name__ == '__main__':
     plot_measure_per_agent(winning_prob_df, 'Probability of Winning')
     winning_prob_df.to_csv(f'{output_dir}/winning_probability.csv', index=False)
 
-    plot_vector_measure(run2agent2CTR, 'CTR Value')
+    # plot_vector_measure(run2agent2CTR, 'CTR Value')
     # CTR_df.to_csv(f'{output_dir}/CTR.csv', index=False)
 
     plot_measure_per_agent(run2agent2CTR_RMSE, 'CTR RMSE')
