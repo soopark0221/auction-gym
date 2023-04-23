@@ -295,7 +295,7 @@ class LogisticRegression(nn.Module):
         return np.concatenate(eigvals).real
 
 class LogisticRegressionM(nn.Module):
-    def __init__(self, context_dim, num_items, mode, rng, lr, c=1.0, nu=1.0):
+    def __init__(self, context_dim, num_items, mode, rng, lr, out, c=1.0, nu=1.0):
         super().__init__()
         self.rng = rng
         self.mode = mode
@@ -308,7 +308,8 @@ class LogisticRegressionM(nn.Module):
         self.c = c
         self.nu = nu
 
-        self.o = nn.Parameter(torch.randn((self.K, self.h)), requires_grad=False)
+        self.o = out.to(self.device) #nn.Parameter(torch.randn((self.K, self.h)), requires_grad=False)
+        
         self.M = nn.Parameter(torch.Tensor(self.h, self.d))
         nn.init.kaiming_uniform_(self.M)
 

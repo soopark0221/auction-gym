@@ -34,7 +34,13 @@ class Auction:
         self.optimal_utility = []
 
         self.num_participants_per_round = num_participants_per_round
+        self.oracle_update_features()
     
+    def oracle_update_features(self):
+        for agent in self.agents:
+            if isinstance(agent.allocator, OracleAllocator):
+                agent.allocator.update_item_features(self.agent2items[agent.name])
+
     def generate_context(self):
         activation, distribution = self.context_dist.split()
         if activation=='Linear':
@@ -57,7 +63,8 @@ class Auction:
         else:    # Logistic
             return sigmoid(context @ item_features.T / np.sqrt(self.context_dim))
 
-    def simulate_opportunity(self):
+
+    def simulate_opportunity(self, auction_no=0):
         # Sample the number of slots uniformly between [1, max_slots]
         num_slots = self.rng.integers(1, self.max_slots + 1)
 
@@ -80,26 +87,26 @@ class Auction:
             best_value = np.max(expected_value)
 
             if isinstance(agent.allocator, OracleAllocator):
-                bid, item = agent.bid(true_context)
+                bid, item = agent.bid(true_context, auction_no=auction_no, item_values=self.agents2item_values[agent.name])
             elif isinstance(agent.bidder, OracleBidder):
-                item, estimated_CTR = agent.select_item(obs_context)
-                value = agent.item_values[item]
+                item, estimated_CTR = agent.select_item(obs_context, item_values=self.agents2item_values[agent.name])
+                value = self.agents2item_values[agent.name][item]
                 b_grid = np.linspace(0.1*value, 1.5*value, 200)
                 prob_win = self.winrate_grid(participating_agents, true_context, b_grid)
-                bid, item = agent.bid(obs_context, value, prob_win, b_grid)
+                bid, item = agent.bid(obs_context, auction_no, self.agents2item_values[agent.name], value, prob_win, b_grid)
                 utility = prob_win * (np.max(expected_value) - b_grid)
                 p = self.winrate_point(participating_agents, true_context, bid)
                 self.regret.append(np.max(utility) - p*(expected_value[item] - bid))
             else:
-                bid, item = agent.bid(obs_context)
+                bid, item = agent.bid(obs_context, auction_no=auction_no, item_values=self.agents2item_values[agent.name])
             bids.append(bid)
             
-            agent.logs[-1].set_true_CTR(best_value, true_CTR[item])
+            agent.logs[auction_no][-1].set_true_CTR(best_value, true_CTR[item])
             CTRs.append(true_CTR[item])
             if not agent.name.startswith('Competitor') and not isinstance(agent.bidder, OracleBidder):
                 regret, u_optimal, b_optimal = self.compute_regret(participating_agents, true_context, bid, expected_value, item)
                 self.regret.append(regret)
-                agent.logs[-1].bidding_error = bid - b_optimal
+                agent.logs[auction_no][-1].bidding_error = bid - b_optimal
                 self.optimal_bidding.append(b_optimal)
                 self.win_optimal.append(self.winrate_point(participating_agents, true_context, b_optimal))
                 self.optimal_utility.append(u_optimal)
@@ -119,9 +126,9 @@ class Auction:
         for slot_id, (winner, price, second_price, outcome) in enumerate(zip(winners, prices, second_prices, outcomes)):
             for agent_id, agent in enumerate(participating_agents):
                 if agent_id == winner:
-                    agent.charge(price, second_price, bool(outcome))
+                    agent.charge(auction_no, price, second_price, bool(outcome))
                 else:
-                    agent.set_price(price)
+                    agent.set_price(auction_no, price)
             self.revenue += price
         for agent in participating_agents:
             agent.update()

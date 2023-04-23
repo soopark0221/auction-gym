@@ -200,12 +200,14 @@ class LogisticAllocatorM(Allocator):
         self.c = c
         self.eps = eps
         self.nu = nu
+        self.out = torch.randn((self.K, 3))
+
         if self.mode=='UCB':
-            self.model = LogisticRegressionM(self.d, self.K, self.mode, self.rng, self.lr, c=self.c).to(self.device)
+            self.model = LogisticRegressionM(self.d, self.K, self.mode, self.rng, self.lr, self.out, c=self.c).to(self.device)
         elif self.mode=='TS':
-            self.model = LogisticRegressionM(self.d, self.K, self.mode, self.rng, self.lr, nu=self.nu).to(self.device)
+            self.model = LogisticRegressionM(self.d, self.K, self.mode, self.rng, self.lr, self.out, nu=self.nu).to(self.device)
         else:
-            self.model = LogisticRegressionM(self.d, self.K, self.mode, self.rng, self.lr).to(self.device)
+            self.model = LogisticRegressionM(self.d, self.K, self.mode, self.rng, self.lr, self.out).to(self.device)
         # self.initialize()
     
     def initialize(self):
@@ -388,17 +390,14 @@ class OracleAllocator(Allocator):
 
     def __init__(self, rng):
         self.item_features = None
-        self.activation = None
         super(OracleAllocator, self).__init__(rng)
 
     def update_item_features(self, item_features):
         self.item_features = item_features
 
     def estimate_CTR(self, context):
-        if self.activation=='Linear':
-            return 0.5 + 0.5 * context @ self.item_features.T
-        else:    # Logistic
-            return sigmoid(context @ self.item_features.T / np.sqrt(self.item_features.shape[1]))
+        # Logistic
+        return sigmoid(context @ self.item_features.T / np.sqrt(self.item_features.shape[1]))
     
     def get_uncertainty(self):
         return np.array([0])
