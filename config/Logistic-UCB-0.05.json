@@ -2,7 +2,7 @@
     "agents": [ {
       "name": "Competitor-Truthful",
       "num_copies": 2,
-      "num_items": 6,
+      "num_items": 10,
         "allocator": {
           "type": "OracleAllocator",
           "kwargs": {}
@@ -13,26 +13,26 @@
       }
     },
     {
-      "name": "Logistic-UCB(0.5)",
+      "name": "Logistic-UCB(0.05)",
       "num_copies": 1,
-      "num_items": 6,
+      "num_items": 10,
         "allocator": {
-          "type": "LogisticAllocator",
+          "type": "LogisticAllocatorM",
           "kwargs": {
             "lr": 1e-3,
-            "context_dim": 8,
-            "num_items": 6,
+            "context_dim": 5,
+            "num_items": 10,
             "mode": "\"UCB\"",
-            "c": 0.5
+            "c": 0.05
           }
         },
         "bidder": {
-            "type": "DefaultBidder",
-            "kwargs": {
-              "lr": 1e-3,
-              "context_dim": 8,
-              "noise": 0.01
-            }
+          "type": "DefaultBidder",
+          "kwargs": {
+            "lr": 1e-3,
+            "context_dim": 5,
+            "noise": 0.01
+          }
       },
       "memory": "inf"
     }],

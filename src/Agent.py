@@ -10,10 +10,12 @@ from Bidder import TruthfulBidder
 class Agent:
     ''' An agent representing an advertiser '''
 
-    def __init__(self, rng, name, num_items, item_values, allocator, bidder, context_dim, update_interval, random_bidding, memory):
+    def __init__(self, rng, name, item_features, item_values, allocator, bidder, context_dim, update_interval, random_bidding, memory):
         self.rng = rng
         self.name = name
-        self.num_items = num_items
+        self.items = item_features
+        self.num_items = item_features.shape[0]
+        self.feature_dim = item_features.shape[1]
         self.context_dim = context_dim
 
         split = random_bidding.split()
@@ -22,7 +24,7 @@ class Agent:
             self.init_num_random_bidding = int(split[1])
             self.decay_factor = float(split[2])
 
-        self.use_optimistic_value = False
+        self.use_optimistic_value = True
 
         # Value distribution
         self.item_values = item_values

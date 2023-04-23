@@ -11,13 +11,14 @@ from Impression import ImpressionOpportunity
 
 class Auction:
     ''' Base class for auctions '''
-    def __init__(self, rng, allocation, agents, agent2items, agents2item_values, max_slots, context_dim, obs_context_dim, context_dist, num_participants_per_round):
+    def __init__(self, rng, allocation, agents, bilinear_map, agent2items, agents2item_values, max_slots, context_dim, obs_context_dim, context_dist, num_participants_per_round):
         self.rng = rng
         self.allocation = allocation
         self.agents = agents
         self.max_slots = max_slots
         self.revenue = .0
 
+        self.M = bilinear_map
         self.agent2items = agent2items
         self.agents2item_values = agents2item_values
 
@@ -36,26 +37,16 @@ class Auction:
         self.num_participants_per_round = num_participants_per_round
     
     def generate_context(self):
-        activation, distribution = self.context_dist.split()
-        if activation=='Linear':
-            if distribution=='Gaussian':
-                context = self.rng.normal(0.0, 1.0, size=self.context_dim)
-                return context / np.sqrt(np.sum(context**2))
-        else:    # Logistic
-            if distribution=='Gaussian':
-                return self.rng.normal(0.0, 1.0, size=self.context_dim)
-            elif distribution=='Bernoulli':
-                return self.rng.binomial(1, self.bernoulli_p, size=self.context_dim)
-            else:
-                return self.rng.uniform(-1.0, 1.0, size=self.context_dim)
+        if self.context_dist=='Gaussian':
+            return self.rng.normal(0.0, 1.0, size=self.context_dim)
+        elif self.context_dist=='Bernoulli':
+            return self.rng.binomial(1, self.bernoulli_p, size=self.context_dim)
+        else:
+            return self.rng.uniform(-1.0, 1.0, size=self.context_dim)
 
-    
     def CTR(self, context, item_features):
-        activation, _ = self.context_dist.split()
-        if activation=='Linear':
-            return 0.5 + 0.5 * context @ item_features.T
-        else:    # Logistic
-            return sigmoid(context @ item_features.T / np.sqrt(self.context_dim))
+        # CTR = sigmoid(context @ M @ item_feature) for each item
+        return sigmoid(item_features @ self.M.T @ context / np.sqrt(self.context_dim*item_features.shape[1]))
 
     def simulate_opportunity(self):
         # Sample the number of slots uniformly between [1, max_slots]

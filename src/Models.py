@@ -295,31 +295,33 @@ class LogisticRegression(nn.Module):
         return np.concatenate(eigvals).real
 
 class LogisticRegressionM(nn.Module):
-    def __init__(self, context_dim, num_items, mode, rng, lr, c=1.0, nu=1.0):
+    def __init__(self, context_dim, items, mode, rng, lr, c=1.0, nu=1.0):
         super().__init__()
         self.rng = rng
         self.mode = mode
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.lr = lr
 
-        self.K = num_items
+        self.items_np = items
+        self.items = torch.Tensor(items).to(self.device)
+        self.K = items.shape[0] # number of items
         self.d = context_dim
-        self.h = 3
+        self.h = items.shape[1] # item feature dimension
         self.c = c
         self.nu = nu
 
-        self.o = nn.Parameter(torch.randn((self.K, self.h)), requires_grad=False)
-        self.M = nn.Parameter(torch.Tensor(self.h, self.d))
+        self.M = nn.Parameter(torch.Tensor(self.d, self.h)) # CTR = sigmoid(context @ M @ item_feature)
         nn.init.kaiming_uniform_(self.M)
 
         self.BCE = torch.nn.BCELoss(reduction='sum')
         self.uncertainty = []
         self.S0_inv = torch.Tensor(np.eye(self.h*self.d)).to(self.device)
-        self.S_inv = torch.Tensor(np.eye(self.h*self.d)).to(self.device)
+        self.S_inv = np.eye(self.h*self.d)
         self.S = torch.Tensor(np.eye(self.h*self.d)).to(self.device)
+        self.sqrt_S = torch.Tensor(np.eye(self.h*self.d)).to(self.device)
 
     def forward(self, X, A):
-        return torch.sigmoid(torch.sum(F.linear(X, self.M)*self.o[A], dim=1))
+        return torch.sigmoid(torch.sum(F.linear(X, self.M.T)*self.items[A], dim=1))
     
     def update(self, contexts, items, outcomes, name):
         X = torch.Tensor(contexts).to(self.device)
@@ -331,46 +333,49 @@ class LogisticRegressionM(nn.Module):
 
         for epoch in range(int(epochs)):
             optimizer.zero_grad()
-            loss = self.loss(X, A, y, self.S0_inv)
+            loss = self.loss(X, A, y)
             loss.backward()
             optimizer.step()
     
         y = self(X, A).numpy(force=True)
-        X = contexts.reshape(-1,self.d)
-        self.S_inv = self.S0_inv
-        for k in range(self.K):
-            mask = items==k
-            y_ = y[mask]
-            X_ = X[mask,:]
-            N = y_.shape[0]
-            y_ = y_ * (1 - y_)
-            for n in range(N):
-                # S = S0_inv + sum(y(1-y) x M x M_t)
-                self.S_inv += y_[n] * (self.flatten(self.M) @ self.flatten(self.M).T)
-        self.S = torch.inverse(self.S_inv)
+        y = y * (1 - y)
+        contexts = contexts.reshape(-1,self.d)
 
-    def loss(self, X, A, y, S0_inv):
+        self.S_inv = self.S0_inv.numpy(force=True)
+        for i in range(contexts.shape[0]):
+            context = contexts[i]
+            item_feature = self.items_np[A[i]]
+            phi = np.outer(context, item_feature).reshape(-1)
+            self.S_inv += y[i] * np.outer(phi, phi)
+        self.S = torch.Tensor(np.diag(np.diag(self.S_inv)**(-1))).to(self.device)
+        self.sqrt_S = torch.Tensor(np.diag(np.sqrt(np.diag(self.S_inv)+1e-6)**(-1))).to(self.device)
+
+    def loss(self, X, A, y):
         y_pred = self(X, A)
-        m = self.flatten(self.M).clone()
-        loss_t = self.BCE(y_pred, y) # + torch.sum(m.T @ S0_inv @ m/2)  # to do: backward twice 
-        return loss_t
+        m = self.flatten(self.M)
+        return self.BCE(y_pred, y) + torch.sum(m.T @ self.S0_inv @ m / 2)
     
     def estimate_CTR(self, context, UCB=False, TS=False):
-        X = torch.Tensor(context.reshape(-1)).to(self.device)
+        # context @ M @ item_feature = M * outer(context, item_feature)
+        X = []
+        context = context.reshape(-1)
+        for i in range(self.K):
+            X.append(np.outer(context, self.items_np[i]).reshape(-1))
+        X = torch.Tensor(np.stack(X)).to(self.device)
         with torch.no_grad():
             if UCB:
                 m = self.flatten(self.M)
-                bound  = self.c * torch.sqrt(m.T @ self.S @ m)
-                U = torch.sigmoid(torch.matmul(self.o, torch.matmul(self.M, X) + bound))
-                return U.numpy(force=True)
+                bound = self.c * torch.sum((X @ self.S) * X, dim=1, keepdim=True)
+                U = torch.sigmoid(X @ m + bound)
+                return U.numpy(force=True).reshape(-1)
             elif TS:
                 m = self.flatten(self.M)
-                m += self.nu * torch.sqrt(self.S) @ torch.tensor(self.rng.normal(0,1,self.d*self.h)) # dh
-                m = self.unflatten(m, self.h, self.d)
-                out = torch.sigmoid(torch.matmul(self.o, torch.matmul(m, X)))
-                return out.numpy(force=True)
+                m = m + self.nu * self.sqrt_S @ torch.Tensor(self.rng.normal(0,1,self.d*self.h).reshape(-1,1)).to(self.device)
+                out = torch.sigmoid(X @ m)
+                return out.numpy(force=True).reshape(-1)
             else:
-                return torch.sigmoid(torch.matmul(self.o, torch.matmul(self.M, X))).numpy(force=True)
+                m = self.flatten(self.M)
+                return torch.sigmoid(X @ m).numpy(force=True).reshape(-1)
 
     def get_uncertainty(self):
         S_ = self.S.numpy(force=True)

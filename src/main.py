@@ -46,16 +46,17 @@ def parse_agent_config(path):
 
     return agent_configs, output_dir
 
-def draw_features(rng, num_runs, context_dim, agent_configs):
+def draw_features(rng, num_runs, context_dim, feature_dim, agent_configs):
     run2agents2items = {}
     run2agents2item_values = {}
+    run2bilinear_map = {}
     for run in range(num_runs):
         agents2items = {}
         for agent_config in agent_configs:
             temp = []
             for k in range(agent_config['num_items']):
-                feature = rng.normal(0.0, 1.0, size=context_dim)
-                temp.append(feature / np.sqrt(np.sum(feature**2)))
+                feature = rng.normal(0.0, 1.0, size=feature_dim)
+                temp.append(feature)
             agents2items[agent_config['name']] = np.stack(temp)
         run2agents2items[run] = agents2items
 
@@ -66,17 +67,19 @@ def draw_features(rng, num_runs, context_dim, agent_configs):
         }
         run2agents2item_values[run] = agents2item_values
 
-    return run2agents2items, run2agents2item_values
+        run2bilinear_map[run] = rng.normal(0.0, 1.0, size=(context_dim, feature_dim))
 
-def instantiate_agents(rng, agent_configs, agents2item_values, agents2items, obs_context_dim, update_interval, context_dist, random_bidding):
+    return run2agents2items, run2agents2item_values, run2bilinear_map
+
+def instantiate_agents(rng, agent_configs, agents2item_values, agents2item_features, bilinear_map, obs_context_dim, update_interval, random_bidding):
     # Store agents to be re-instantiated in subsequent runs
     # Set up agents
     agents = [
         Agent(rng=rng,
               name=agent_config['name'],
-              num_items=agent_config['num_items'],
+              item_features=agents2item_features[agent_config['name']],
               item_values=agents2item_values[agent_config['name']],
-              allocator=eval(f"{agent_config['allocator']['type']}(rng=rng{parse_kwargs(agent_config['allocator']['kwargs'])})"),
+              allocator=eval(f"{agent_config['allocator']['type']}(rng=rng, item_features=agents2item_features[agent_config['name']]{parse_kwargs(agent_config['allocator']['kwargs'])})"),
               bidder=eval(f"{agent_config['bidder']['type']}(rng=rng{parse_kwargs(agent_config['bidder']['kwargs'])})"),
               context_dim = obs_context_dim,
               update_interval=update_interval,
@@ -85,19 +88,18 @@ def instantiate_agents(rng, agent_configs, agents2item_values, agents2items, obs
         for agent_config in agent_configs
     ]
 
-    activation, distribution = context_dist.split()
     for agent in agents:
         if isinstance(agent.allocator, OracleAllocator):
-            agent.allocator.update_item_features(agents2items[agent.name])
-            agent.allocator.activation = activation
+            agent.allocator.set_CTR_model(bilinear_map)
 
     return agents
 
 
-def instantiate_auction(rng, training_config, agents2items, agents2item_values, agents, max_slots, context_dim, obs_context_dim, context_dist):
+def instantiate_auction(rng, training_config, bilinear_map, agents2items, agents2item_values, agents, max_slots, context_dim, obs_context_dim, context_dist):
     return Auction(rng,
                     eval(f"{training_config['allocation']}()"),
                     agents,
+                    bilinear_map,
                     agents2items,
                     agents2item_values,
                     max_slots,
@@ -362,6 +364,7 @@ if __name__ == '__main__':
     context_dim = training_config['context_dim']
     item_feature_var = training_config['item_feature_var']
     obs_context_dim = training_config['obs_context_dim']
+    feature_dim = training_config['feature_dim']
     context_dist = training_config['context_distribution']
     random_bidding = training_config['random_bidding']
 
@@ -408,15 +411,16 @@ if __name__ == '__main__':
     run2utility_optimal = {}
     run2optimistic_CTR_ratio = {}
 
-    run2agents2items, run2agents2item_values = draw_features(rng, num_runs, context_dim, agent_configs)
+    run2agents2items, run2agents2item_values, run2bilinear_map = draw_features(rng, num_runs, context_dim, feature_dim, agent_configs)
 
     # Repeated runs
     for run in range(num_runs):
         agents2items = run2agents2items[run]
         agents2item_values = run2agents2item_values[run]
-        agents = instantiate_agents(rng, agent_configs, agents2item_values, agents2items, obs_context_dim, update_interval, context_dist, random_bidding)
+        bilinear_map = run2bilinear_map[run]
+        agents = instantiate_agents(rng, agent_configs, agents2item_values, agents2items, bilinear_map, obs_context_dim, update_interval, random_bidding)
         auction  = instantiate_auction(
-            rng, training_config, agents2items, agents2item_values, agents, max_slots, context_dim, obs_context_dim, context_dist)
+            rng, training_config, bilinear_map, agents2items, agents2item_values, agents, max_slots, context_dim, obs_context_dim, context_dist)
         
         # Placeholders for summary statistics per run
         agent2net_utility = defaultdict(list)
@@ -491,7 +495,7 @@ if __name__ == '__main__':
     plot_measure_per_agent(utility_df, 'Utility (Cumulative)')
     utility_df.to_csv(f'{output_dir}/net_utility.csv', index=False)
 
-    plot_measure_per_agent(run2agent2best_expected_value, '')
+    plot_measure_per_agent(run2agent2best_expected_value, 'Best Expected Value')
 
     allocation_regret_df = plot_measure_per_agent(run2agent2allocation_regret, 'Allocation Regret')
     allocation_regret_df.to_csv(f'{output_dir}/allocation_regret.csv', index=False)

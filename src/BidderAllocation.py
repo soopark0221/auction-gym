@@ -12,8 +12,11 @@ from Models import *
 class Allocator:
     """ Base class for an allocator """
 
-    def __init__(self, rng):
+    def __init__(self, rng, item_features):
         self.rng = rng
+        self.item_features = item_features
+        self.feature_dim = item_features.shape[1]
+        self.K = item_features.shape[0]
 
     def update(self, contexts, items, outcomes, name):
         pass
@@ -94,10 +97,9 @@ class NeuralAllocator(Allocator):
             return np.array([0])
     
 class LinearAllocator(Allocator):
-    def __init__(self, rng, context_dim, num_items, mode, c=0.0, eps=0.1):
+    def __init__(self, rng, context_dim, mode, c=0.0, eps=0.1):
         super().__init__(rng)
         self.mode = mode # Epsilon-greedy or UCB or TS    
-        self.K = num_items
         self.d = context_dim
         self.c = c
         self.eps = eps
@@ -189,8 +191,8 @@ class LogisticAllocator(Allocator):
         return self.model.get_uncertainty()
 
 class LogisticAllocatorM(Allocator):
-    def __init__(self, rng, lr, context_dim, num_items, mode, c=0.0, eps=0.1, nu=0.0):
-        super().__init__(rng)
+    def __init__(self, rng, item_features, lr, context_dim, num_items, mode, c=0.0, eps=0.1, nu=0.0):
+        super().__init__(rng, item_features)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.mode = mode
         self.lr = lr
@@ -201,16 +203,11 @@ class LogisticAllocatorM(Allocator):
         self.eps = eps
         self.nu = nu
         if self.mode=='UCB':
-            self.model = LogisticRegressionM(self.d, self.K, self.mode, self.rng, self.lr, c=self.c).to(self.device)
+            self.model = LogisticRegressionM(self.d, self.item_features, self.mode, self.rng, self.lr, c=self.c).to(self.device)
         elif self.mode=='TS':
-            self.model = LogisticRegressionM(self.d, self.K, self.mode, self.rng, self.lr, nu=self.nu).to(self.device)
+            self.model = LogisticRegressionM(self.d, self.item_features, self.mode, self.rng, self.lr, nu=self.nu).to(self.device)
         else:
-            self.model = LogisticRegressionM(self.d, self.K, self.mode, self.rng, self.lr).to(self.device)
-        temp = [np.identity(self.d) for _ in range(self.K)]
-        self.S0_inv = torch.Tensor(np.identity(self.d)).to(self.device)
-        self.S_inv = np.stack(temp)
-        self.S = torch.Tensor(self.S_inv.copy()).to(self.device)
-
+            self.model = LogisticRegressionM(self.d, self.item_features, self.mode, self.rng, self.lr).to(self.device)
         # self.initialize()
     
     def initialize(self):
@@ -391,19 +388,14 @@ class NTKAllocator(Allocator):
 class OracleAllocator(Allocator):
     """ An allocator that acts based on the true P(click)"""
 
-    def __init__(self, rng):
-        self.item_features = None
-        self.activation = None
-        super(OracleAllocator, self).__init__(rng)
+    def __init__(self, rng, item_features):
+        super(OracleAllocator, self).__init__(rng, item_features)
 
-    def update_item_features(self, item_features):
-        self.item_features = item_features
+    def set_CTR_model(self, M):
+        self.M = M
 
     def estimate_CTR(self, context):
-        if self.activation=='Linear':
-            return 0.5 + 0.5 * context @ self.item_features.T
-        else:    # Logistic
-            return sigmoid(context @ self.item_features.T / np.sqrt(self.item_features.shape[1]))
+        return sigmoid(self.item_features @ self.M.T @ context / np.sqrt(context.shape[0]*self.item_features.shape[1]))
     
     def get_uncertainty(self):
         return np.array([0])
