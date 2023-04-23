@@ -112,33 +112,33 @@ def simulation_run(run, multi_auctions):
             multi_auctions[j].simulate_opportunity(auction_no=j)
 
             if i%record_interval==0:
-                for agent_id, agent in enumerate(auction.agents):
-                    agent2net_utility[agent.name].append(agent.get_net_utility(j))
+                for agent_id, agent in enumerate(multi_auctions[j].agents):
+                    auction2agent2net_utility[j][agent.name].append(agent.get_net_utility(j))
 
-                    agent2allocation_regret[agent.name].append(agent.get_allocation_regret(j))
-                    agent2overbid_regret[agent.name].append(agent.get_overbid_regret(j))
-                    agent2underbid_regret[agent.name].append(agent.get_underbid_regret(j))
+                    auction2agent2allocation_regret[j][agent.name].append(agent.get_allocation_regret(j))
+                    auction2agent2overbid_regret[j][agent.name].append(agent.get_overbid_regret(j))
+                    auction2agent2underbid_regret[j][agent.name].append(agent.get_underbid_regret(j))
 
-                    agent2CTR_RMSE[agent.name].append(agent.get_CTR_RMSE(j))
-                    agent2CTR_bias[agent.name].append(agent.get_CTR_bias(j))
+                    auction2agent2CTR_RMSE[j][agent.name].append(agent.get_CTR_RMSE(j))
+                    auction2agent2CTR_bias[j][agent.name].append(agent.get_CTR_bias(j))
 
-                    agent2winning_prob[agent.name].append(agent.get_winning_prob(j))
-                    agent2CTR[agent.name].append(agent.get_CTRs(j))
+                    auction2agent2winning_prob[j][agent.name].append(agent.get_winning_prob(j))
+                    auction2agent2CTR[j][agent.name].append(agent.get_CTRs(j))
 
                     if not isinstance(agent.bidder, TruthfulBidder):
-                        bidding.append(np.array(agent.get_bid(j)))
-                        uncertainty.append(agent.get_uncertainty(j))
-                        regret.append(auction.get_regret())
-                        optimal_selection_rate.append(agent.get_optimal_selection_rate(j))
-                        bidding_error.append(agent.get_bidding_error(j))
-                        bidding_optimal.append(auction.get_optimal_bidding())
-                        winrate_optimal.append(auction.get_winrate_optimal())
-                        utility_optimal.append(auction.get_optimal_utility())
-                        optimistic_CTR_ratio.append(agent.get_optimistic_CTR_ratio(j))
+                        bidding[j].append(np.array(agent.get_bid()))
+                        uncertainty[j].append(agent.get_uncertainty())
+                        regret[j].append(auction.get_regret())
+                        optimal_selection_rate[j].append(agent.get_optimal_selection_rate(j))
+                        bidding_error[j].append(agent.get_bidding_error(j))
+                        bidding_optimal[j].append(auction.get_optimal_bidding())
+                        winrate_optimal[j].append(auction.get_winrate_optimal())
+                        utility_optimal[j].append(auction.get_optimal_utility())
+                        optimistic_CTR_ratio[j].append(agent.get_optimistic_CTR_ratio(j))
 
                     best_expected_value = np.mean([opp.best_expected_value for opp in agent.logs[j]])
-                    agent2best_expected_value[agent.name].append(best_expected_value)
-                    agent.move_index()
+                    auction2agent2best_expected_value[j][agent.name].append(best_expected_value)
+                    agent.move_index(j)
                 auction_revenue.append(auction.revenue)
                 auction.clear_revenue()
         # if i%int(num_iter/5)==0:
@@ -164,14 +164,16 @@ def plot_winrate(agent):
         winrate_estimation.append(np.concatenate([gamma, y], axis=1))
 
 def measure_per_agent2df(run2agent2measure, measure_name):
-        df_rows = {'Run': [], 'Agent': [], 'Step': [], measure_name: []}
+        df_rows = {'Run': [], 'Auction': [], 'Agent': [], 'Step': [], measure_name: []}
         for run, agent2measure in run2agent2measure.items():
-            for agent, measures in agent2measure.items():
-                for step, measure in enumerate(measures):
-                    df_rows['Run'].append(run)
-                    df_rows['Agent'].append(agent)
-                    df_rows['Step'].append(step)
-                    df_rows[measure_name].append(measure)
+            for auction, agent in agent2measure.items():
+                for agent, measures in agent2measure.items():
+                    for step, measure in enumerate(measures):
+                        df_rows['Run'].append(run)
+                        df_rows['Auction'].append(auction)
+                        df_rows['Agent'].append(agent)
+                        df_rows['Step'].append(step)
+                        df_rows[measure_name].append(measure)
         return pd.DataFrame(df_rows)
     
 def vector_of_measure2df(run2vector_measure, measure_name):
@@ -421,50 +423,48 @@ if __name__ == '__main__':
             multi_auctions.append(auction)
         
         # Placeholders for summary statistics per run
-        agent2net_utility = defaultdict(list)
-        agent2allocation_regret = defaultdict(list)
-        agent2overbid_regret = defaultdict(list)
-        agent2underbid_regret = defaultdict(list)
-        agent2best_expected_value = defaultdict(list)
+        auction2agent2net_utility = defaultdict(lambda: defaultdict(list))
 
-        agent2CTR = defaultdict(list)
-        agent2CTR_RMSE = defaultdict(list)
-        agent2CTR_bias = defaultdict(list)
+        auction2agent2allocation_regret = defaultdict(lambda: defaultdict(list))
+        auction2agent2overbid_regret = defaultdict(lambda: defaultdict(list))
+        auction2agent2underbid_regret = defaultdict(lambda: defaultdict(list))
+        auction2agent2best_expected_value = defaultdict(lambda: defaultdict(list))
 
-        agent2winning_prob = defaultdict(list)
+        auction2agent2CTR = defaultdict(lambda: defaultdict(list))
+        auction2agent2CTR_RMSE = defaultdict(lambda: defaultdict(list))
+        auction2agent2CTR_bias = defaultdict(lambda: defaultdict(list))
 
-        auction_revenue = []
+        auction2agent2winning_prob = defaultdict(lambda: defaultdict(list))
 
-        bidding = []
-        uncertainty = []
-        
-        winrate_estimation = []
-
-        regret = []
-        optimal_selection_rate = []
-        bidding_error = []
-        winrate_optimal = []
-        bidding_optimal = []
-        utility_optimal = []
-        optimistic_CTR_ratio = []
+        auction_revenue = [[] for _ in range(num_auctions)]
+        bidding = [[] for _ in range(num_auctions)]
+        uncertainty = [[] for _ in range(num_auctions)]
+        winrate_estimation = [[] for _ in range(num_auctions)]
+        regret = [[] for _ in range(num_auctions)]
+        optimal_selection_rate = [[] for _ in range(num_auctions)]
+        bidding_error = [[] for _ in range(num_auctions)]
+        winrate_optimal = [[] for _ in range(num_auctions)]
+        bidding_optimal = [[] for _ in range(num_auctions)]
+        utility_optimal = [[] for _ in range(num_auctions)]
+        optimistic_CTR_ratio = [[] for _ in range(num_auctions)]
 
         # Run simulation (with global parameters -- fine for the purposes of this script)
         simulation_run(run, multi_auctions)
 
         # Store
-        run2agent2net_utility[run] = agent2net_utility
-        run2agent2allocation_regret[run] = agent2allocation_regret
-        run2agent2overbid_regret[run] = agent2overbid_regret
-        run2agent2underbid_regret[run] = agent2underbid_regret
-        run2agent2best_expected_value[run] = agent2best_expected_value
+        run2agent2net_utility[run] = auction2agent2net_utility
+        run2agent2allocation_regret[run] = auction2agent2allocation_regret
+        run2agent2overbid_regret[run] = auction2agent2overbid_regret
+        run2agent2underbid_regret[run] = auction2agent2underbid_regret
+        run2agent2best_expected_value[run] = auction2agent2best_expected_value
 
-        run2agent2CTR[run] = agent2CTR
-        run2agent2CTR_RMSE[run] = agent2CTR_RMSE
-        run2agent2CTR_bias[run] = agent2CTR_bias
+        run2agent2CTR[run] = auction2agent2CTR
+        run2agent2CTR_RMSE[run] = auction2agent2CTR_RMSE
+        run2agent2CTR_bias[run] = auction2agent2CTR_bias
         run2bidding[run] = bidding
 
         run2uncertainty[run] = uncertainty
-        run2agent2winning_prob[run] = agent2winning_prob
+        run2agent2winning_prob[run] = auction2agent2winning_prob
 
         run2winrate_estimation[run] = winrate_estimation
 

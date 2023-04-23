@@ -24,7 +24,7 @@ class Agent:
 
         self.use_optimistic_value = True
 
-        self.logs = [[] for _ in range(1)]
+        self.logs = [[] for _ in range(3)]
 
         self.allocator = allocator
         self.bidder = bidder
@@ -182,7 +182,7 @@ class Agent:
         return np.mean(list((opp.estimated_CTR / opp.true_CTR) for opp in self.logs[auction_no][self.record_index:]))
     
     def get_optimistic_CTR_ratio(self, auction_no):
-        return np.mean(list((opp.optimistic_CTR / opp.true_CTR) for opp in sself.logs[auction_no][self.record_index:]))
+        return np.mean(list((opp.optimistic_CTR / opp.true_CTR) for opp in self.logs[auction_no][self.record_index:]))
     
     def get_uncertainty(self):
         return self.allocator.get_uncertainty()
