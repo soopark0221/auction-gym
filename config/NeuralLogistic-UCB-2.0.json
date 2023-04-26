@@ -1,0 +1,42 @@
+{
+    "agents": [ {
+      "name": "Competitor-Truthful",
+      "num_copies": 2,
+      "num_items": 10,
+        "allocator": {
+          "type": "OracleAllocator",
+          "kwargs": {}
+        },
+        "bidder": {
+            "type": "TruthfulBidder",
+            "kwargs": {}
+      }
+    },
+    {
+      "name": "NeuralLogistic-UCB(2.0)",
+      "num_copies": 1,
+      "num_items": 10,
+        "allocator": {
+          "type": "NeuralLogisticAllocator",
+          "kwargs": {
+            "lr": 1e-3,
+            "context_dim": 5,
+            "num_items": 10,
+            "latent_dim": 32,
+            "mode": "\"UCB\"",
+            "c": 2.0
+          }
+        },
+        "bidder": {
+          "type": "DefaultBidder",
+          "kwargs": {
+            "lr": 1e-3,
+            "context_dim": 5,
+            "noise": 0.01
+          }
+      },
+      "memory": "inf"
+    }],
+    "output_dir": "results/NeuralLogistic-UCB/",
+    "network_architecture": "input-16-output"
+  }

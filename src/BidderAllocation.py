@@ -22,76 +22,55 @@ class Allocator:
         pass
     
 class NeuralAllocator(Allocator):
-    def __init__(self, rng, lr, context_dim, num_items, mode, eps=0.1, prior_var=1.0):
-        self.mode = mode # epsilon-greedy, BBB
+    def __init__(self, rng, item_features, lr, context_dim, num_items, mode, latent_dim, eps=None, prior_var=None):
+        super().__init__(rng, item_features)
+        self.mode = mode
         if self.mode=='Epsilon-greedy':
-            self.net = NeuralRegression(n_dim=context_dim, n_items=num_items)
+            self.net = NeuralRegression2(context_dim+self.feature_dim, latent_dim)
             self.eps = eps
-        elif self.mode=='Bayes by Backprop':
-            self.net = BayesianNeuralRegression(n_dim=context_dim, n_items=num_items, prior_var=prior_var)
+        else:
+            self.net = BayesianNeuralRegression(context_dim+self.item_features.shape[1], latent_dim, prior_var)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.net.to(self.device)
         self.count = 0
         self.lr = lr
-        super().__init__(rng)
+        self.optimizer = torch.optim.Adam(self.net.parameters(), lr=self.lr)
 
     def update(self, contexts, items, outcomes, name):
         self.count += 1
 
-        if self.count%10==0:
-            X, A, y = contexts, items, outcomes
-            N = X.shape[0]
-            if N<10:
-                return
+        X = np.concatenate([contexts, self.item_features[items]], axis=1)
+        X, y = torch.Tensor(X).to(self.device), torch.Tensor(outcomes).to(self.device)
+        N = X.shape[0]
+        if N<10:
+            return
 
-            # self.net.train()
-            # epochs = 100
-            # optimizer = torch.optim.Adam(self.net.parameters(), lr=self.lr)
+        self.net.train()
+        epochs = 5000
 
-            # B = min(8192, N)
-            # batch_num = int(N/B)
-
-            # X, A, y = torch.Tensor(X).to(self.device), torch.LongTensor(A).to(self.device), torch.Tensor(y).to(self.device)
-            # losses = []
-            # for epoch in tqdm(range(int(epochs)), desc=f'{name}'):
-            #     for i in range(batch_num):
-            #         X_mini = X[i:i+B]
-            #         A_mini = A[i:i+B]
-            #         y_mini = y[i:i+B]
-            #         optimizer.zero_grad()
-            #         if self.mode=='Epsilon-greedy':
-            #             loss = self.net.loss(self.net.predict_item(X_mini, A_mini).squeeze(), y_mini)
-            #         elif self.mode=='Bayes by Backprop':
-            #             loss = self.net.loss(self.net.predict_item(X_mini, A_mini).squeeze(), y_mini, N)
-            #         loss.backward()
-            #         optimizer.step()
-            #         losses.append(loss.item())
-            
-            self.net.train()
-            epochs = 100
-            optimizer = torch.optim.Adam(self.net.parameters(), lr=self.lr)
-
-            X, A, y = torch.Tensor(X).to(self.device), torch.LongTensor(A).to(self.device), torch.Tensor(y).to(self.device)
-            losses = []
-            for epoch in range(int(epochs)):
-                optimizer.zero_grad()
-                if self.mode=='Epsilon-greedy':
-                    loss = self.net.loss(self.net.predict_item(X, A).squeeze(), y)
-                elif self.mode=='Bayes by Backprop':
-                    loss = self.net.loss(self.net.predict_item(X, A).squeeze(), y, N)
-                loss.backward()
-                optimizer.step()
-                losses.append(loss.item())
+        for epoch in range(int(epochs)):
+            self.optimizer.zero_grad()
+            if self.mode=='Epsilon-greedy':
+                loss = self.net.loss(self.net(X).squeeze(), y)
+            elif self.mode=='TS':
+                loss = self.net.loss(self.net(X).squeeze(), y, N)
+            loss.backward()
+            self.optimizer.step()
         self.net.eval()
 
-    def estimate_CTR(self, context, sample=True):
-        if self.mode=='Epsilon-greedy':
-            return self.net(torch.from_numpy(context.astype(np.float32)).to(self.device)).numpy(force=True)
-        elif self.mode=='Bayes by Backprop':
-            return self.net(torch.from_numpy(context.astype(np.float32)).to(self.device), sample=sample).numpy(force=True)
+    def estimate_CTR(self, context, TS=False):
+        if TS:
+            X = torch.Tensor(np.concatenate([np.tile(context.reshape(1,-1),(self.K, 1)), self.item_features],axis=1)).to(self.device)
+            return self.net(X, MAP=False).numpy(force=True).reshape(-1)
+        else:
+            X = torch.Tensor(np.concatenate([np.tile(context.reshape(1,-1),(self.K, 1)), self.item_features],axis=1)).to(self.device)
+            if self.mode=='TS':
+                return self.net(X, MAP=True).numpy(force=True).reshape(-1)
+            else:
+                return self.net(X).numpy(force=True).reshape(-1)
     
     def get_uncertainty(self):
-        if self.mode=='Bayes by Backprop':
+        if self.mode=='TS':
             return self.net.get_uncertainty()
         else:
             return np.array([0])
@@ -232,9 +211,9 @@ class LogisticAllocatorM(Allocator):
 
 
 
-class NeuralLinearAllocator(Allocator):
-    def __init__(self, rng, lr, context_dim, num_items, mode, c=1.0, eps=0.1, nu=0.1):
-        super().__init__(rng)
+class NeuralLogisticAllocator(Allocator):
+    def __init__(self, rng, item_features, lr, context_dim, num_items, mode, latent_dim, c=1.0, eps=0.1, nu=0.1):
+        super().__init__(rng, item_features)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.lr = lr
         self.mode = mode
@@ -244,53 +223,47 @@ class NeuralLinearAllocator(Allocator):
 
         self.d = context_dim
         self.K = num_items
-        self.net = NeuralRegression(self.d, self.K).to(self.device)
-        self.H = self.net.H
+        self.H = latent_dim
+        self.net = NeuralRegression2(self.d+self.feature_dim, self.H).to(self.device)
 
-        split = mode.split()
-        if split[0]=='Linear':
-            if split[1]=='UCB':
-                self.model = LinearRegression(self.H, self.K, self.mode, self.rng, c=self.c).to(self.device)
-            elif split[1]=='TS':
-                self.model = LinearRegression(self.H, self.K, self.mode, self.rng, nu=self.nu).to(self.device)
-            else:
-                self.model = LinearRegression(self.H, self.K, self.mode, self.rng).to(self.device)
-        elif split[0]=='Logistic':
-            if split[1]=='UCB':
-                self.model = LogisticRegression(self.H, self.K, self.mode, self.rng, self.lr, c=self.c).to(self.device)
-            elif split[1]=='TS':
-                self.model = LogisticRegression(self.H, self.K, self.mode, self.rng, self.lr, nu=self.nu).to(self.device)
-            else:
-                self.model = LogisticRegression(self.H, self.K, self.mode, self.rng, self.lr).to(self.device)
-        self.mode = split[1]
+        if mode=='UCB':
+            self.model = LogisticRegressionS(self.H, self.mode, self.rng, self.lr, c=self.c).to(self.device)
+        elif mode=='TS':
+            self.model = LogisticRegressionS(self.H, self.mode, self.rng, self.lr, nu=self.nu).to(self.device)
+        else:
+            self.model = LogisticRegressionS(self.H, self.mode, self.rng, self.lr).to(self.device)
         self.count = 0
+        self.optimizer = torch.optim.Adam(self.net.parameters(), lr=self.lr)
         
     def update(self, contexts, items, outcomes, name):
         self.count += 1
 
-        if self.count%10==0:
-            X, A, y = torch.Tensor(contexts).to(self.device), torch.LongTensor(items).to(self.device), torch.Tensor(outcomes).to(self.device)
-            N = y.size(0)
+        X = np.concatenate([contexts, self.item_features[items]], axis=1)
+        X = torch.Tensor(X).to(self.device)
+        if self.count%5==0:
+            y = torch.Tensor(outcomes).to(self.device)
 
             self.net.train()
-            epochs = 100
-            optimizer = torch.optim.Adam(self.net.parameters(), lr=self.lr)
+            epochs = 1000
 
-            losses = []
             for epoch in range(int(epochs)):
-                optimizer.zero_grad()
-                loss = self.net.loss(self.net.predict_item(X, A).squeeze(), y)
+                self.optimizer.zero_grad()
+                loss = self.net.loss(self.net(X).squeeze(), y)
                 loss.backward()
-                optimizer.step()
-                losses.append(loss.item())
+                self.optimizer.step()
             self.net.eval()
         
-            F = self.net.feature(X).numpy(force=True)
-            self.model.update(F, items, outcomes, name)
+        X = self.net.linear1(X)
+        F = self.net.linear2(X).numpy(force=True)
+        F = np.concatenate([F, np.ones((F.shape[0],1))],axis=1)
+        self.model.update(F, items, outcomes, name)
 
     def estimate_CTR(self, context, UCB=False, TS=False):
-        X = torch.Tensor(context.reshape(-1)).to(self.device)
-        F = self.net.feature(X).numpy(force=True)
+        X = np.concatenate([np.tile(context.reshape(1,-1),(self.K,1)), self.item_features], axis=1)
+        X = torch.Tensor(X).to(self.device)
+        X = self.net.linear1(X)
+        F = self.net.linear2(X).numpy(force=True)
+        F = np.concatenate([F, np.ones((F.shape[0],1))],axis=1)
         return self.model.estimate_CTR(F, UCB, TS)
 
     def get_uncertainty(self):

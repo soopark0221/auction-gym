@@ -91,6 +91,8 @@ def instantiate_agents(rng, agent_configs, agents2item_values, agents2item_featu
     for agent in agents:
         if isinstance(agent.allocator, OracleAllocator):
             agent.allocator.set_CTR_model(bilinear_map)
+        if isinstance(agent.bidder, DefaultBidder) or isinstance(agent.bidder, DRBidder):
+            agent.bidder.initialize(agents2item_values[agent.name])
 
     return agents
 
@@ -143,6 +145,10 @@ def simulation_run(run):
                     winrate_optimal.append(auction.get_winrate_optimal())
                     utility_optimal.append(auction.get_optimal_utility())
                     optimistic_CTR_ratio.append(agent.get_optimistic_CTR_ratio())
+                    if isinstance(agent.allocator, LogisticAllocatorM):
+                        matrix_error.append(np.sqrt(np.sum((auction.M.T-agent.get_matrix())**2)))
+                    else:
+                        matrix_error.append(0.0)
 
                 best_expected_value = np.mean([opp.best_expected_value for opp in agent.logs])
                 agent2best_expected_value[agent.name].append(best_expected_value)
@@ -411,6 +417,8 @@ if __name__ == '__main__':
     run2utility_optimal = {}
     run2optimistic_CTR_ratio = {}
 
+    run2matrix_error = {}
+
     run2agents2items, run2agents2item_values, run2bilinear_map = draw_features(rng, num_runs, context_dim, feature_dim, agent_configs)
 
     # Repeated runs
@@ -450,6 +458,8 @@ if __name__ == '__main__':
         utility_optimal = []
         optimistic_CTR_ratio = []
 
+        matrix_error =[]
+
         # Run simulation (with global parameters -- fine for the purposes of this script)
         simulation_run(run)
 
@@ -478,7 +488,8 @@ if __name__ == '__main__':
         run2bidding_optimal[run] = bidding_optimal
         run2utility_optimal[run] = utility_optimal
         run2optimistic_CTR_ratio[run] = optimistic_CTR_ratio
-
+        
+        run2matrix_error[run] = matrix_error
 
 
     plot_vector_measure(run2bidding_error, 'Bidding Error')
@@ -531,7 +542,7 @@ if __name__ == '__main__':
     CTR_df.to_csv(f'{output_dir}/CTR.csv', index=False)
     plot_measure(CTR_df, 'CTR', hue='Expected or Optimistic')
     
-    bidding_df = plot_vector_measure(run2bidding, 'Bidding')
+    # bidding_df = plot_vector_measure(run2bidding, 'Bidding')
     # bidding_df.to_csv(f'{output_dir}/Bidding.csv', index=False)
 
     regret_df = measure2df(run2regret, f'Regret({record_interval}steps)')
@@ -543,3 +554,6 @@ if __name__ == '__main__':
 
     # net_utility_df_overall = utility_df.groupby(['Run', 'Step'])['Net Utility'].sum().reset_index().rename(columns={'Net Utility': 'Social Surplus'})
     # plot_measure(net_utility_df_overall, 'Social Surplus')
+
+    matrix_error_df = measure2df(run2matrix_error, 'Matrix L2 Error')
+    plot_measure(matrix_error_df, 'Matrix L2 Error')

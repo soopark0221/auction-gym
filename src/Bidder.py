@@ -15,6 +15,7 @@ class Bidder:
     def __init__(self, rng):
         self.rng = rng
         self.truthful = False # Default
+        self.item_values = None
 
     def update(self, contexts, values, bids, prices, outcomes, estimated_CTRs, won_mask, utilities, name):
         pass
@@ -28,13 +29,14 @@ class Bidder:
 
 class TruthfulBidder(Bidder):
     """ A bidder that bids truthfully """
-    def __init__(self, rng, noise=0.1):
+    def __init__(self, rng, noise=0.1, bias = 0.8):
         super(TruthfulBidder, self).__init__(rng)
         self.truthful = True
         self.noise = noise
+        self.bias = bias
 
     def bid(self, value, context, estimated_CTR):
-        bid = value * (estimated_CTR + self.rng.normal(0,self.noise,1))
+        bid = value * (estimated_CTR * self.bias + self.rng.normal(0,self.noise,1))
         return bid.item()
 
 class DQNBidder(Bidder):
@@ -634,22 +636,24 @@ class DefaultBidder(Bidder):
 
         self.winrate_model = NeuralWinRateEstimator(context_dim).to(self.device)
         self.noise = noise
-        # self.initialize()
     
-    def initialize(self):
+    def initialize(self, item_values):
+        self.item_values = item_values
         X = []
         y = []
+        median_value = np.median(self.item_values)
+        max_value = np.max(self.item_values)
         for i in range(500):
             context = self.rng.normal(0.0, 1.0, size=self.context_dim)
-            b = self.rng.uniform(0.0, 1.5, 10).reshape(-1,1)
-            y.append((1 + np.exp(-10*(b-1.0)))**(-1))
-            X.append(np.concatenate([np.tile(context/np.sqrt(np.sum(context**2)), (10,1)), b], axis=-1))
-        self.X_init = np.concatenate(X)
-        self.y_init = np.concatenate(y)
-        X = torch.Tensor(self.X_init).to(self.device)
-        y = torch.Tensor(self.y_init).to(self.device)
+            b = np.linspace(0.0, max_value , 10).reshape(-1,1)
+            y.append(np.clip(b/median_value, 0.0, 1.0))
+            X.append(np.concatenate([np.tile(context, (10,1)), b], axis=-1))
+        X_init = np.concatenate(X)
+        y_init = np.concatenate(y)
+        X = torch.Tensor(X_init).to(self.device)
+        y = torch.Tensor(y_init).to(self.device)
 
-        epochs = 100000
+        epochs = 10000
         optimizer = torch.optim.Adam(self.winrate_model.parameters(), lr=self.lr, weight_decay=1e-6, amsgrad=True)
         MSE = nn.MSELoss()
         self.winrate_model.train()
@@ -680,26 +684,15 @@ class DefaultBidder(Bidder):
         return bid
 
     def update(self, contexts, values, bids, prices, outcomes, estimated_CTRs, won_mask, utilities, name):
-        # FALLBACK: if you lost every auction you participated in, your model collapsed
-        # Revert to not shading for 1 round, to collect data with informational value
         if not won_mask.astype(np.uint8).sum():
-            print(f'! Fallback for {name}')
+            print(f'Not enough data collected for {name}')
             return
 
-        # Compute net utility
-        utilities = np.zeros_like(values)
-        utilities[won_mask] = (values[won_mask] * outcomes[won_mask]) - prices[won_mask]
-        utilities = torch.Tensor(utilities).to(self.device)
-
-        # Augment data with samples: if you shade 100%, you will lose
-        # If you won now, you would have also won if you bid higher
         X = np.hstack((contexts.reshape(-1,self.context_dim), bids.reshape(-1, 1)))
-        # X = np.concatenate([X, self.X_init])
         N = X.shape[0]
         X = torch.Tensor(X).to(self.device)
 
         y = won_mask.astype(np.float32).reshape(-1,1)
-        # y = np.concatenate([y, self.y_init])
         y = torch.Tensor(y).to(self.device)
 
         self.winrate_model.train()
@@ -711,7 +704,144 @@ class DefaultBidder(Bidder):
             loss.backward()
             optimizer.step()
         self.winrate_model.eval()
-        self.model_initialised = True
+
+    def clear_logs(self, memory):
+        if memory=='inf':
+            pass
+        else:
+            self.b = self.b[-memory:]
+
+class IPSBidder(Bidder):
+    def __init__(self, rng, lr, context_dim, entropy_factor, use_WIS=False):
+        super().__init__(rng)
+        self.context_dim = context_dim
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.lr = lr
+
+        self.bidding_policy = StochasticPolicy(context_dim, 'REINFORCE', use_WIS=use_WIS, entropy_factor=entropy_factor).to(self.device)
+        self.target_optimizer = torch.optim.Adam(self.bidding_policy.parameters(), lr=self.lr, weight_decay=1e-4, amsgrad=True)
+        self.b = []
+        self.propensity = []
+
+    def bid(self, value, context, estimated_CTR):
+        expected_value = value * estimated_CTR
+        x = torch.Tensor(np.concatenate([context, np.array(expected_value).reshape(-1)])).to(self.device)
+        C = torch.Tensor(context).to(self.device)
+        V = torch.Tensor(np.array(value)).to(self.device)
+        with torch.no_grad():
+            bid = self.bidding_policy(x)
+            self.propensity.append(self.bidding_policy.normal_pdf(C.reshape(1,-1), V.reshape(1,1), bid).item())
+        return np.clip(bid.numpy(force=True), value*0.1, value*1.5).item()
+
+    def update(self, contexts, values, bids, prices, outcomes, estimated_CTRs, won_mask, utilities, name):
+        X = torch.Tensor(contexts).to(self.device)
+        U = torch.Tensor(utilities).to(self.device)
+        V = torch.Tensor(values*estimated_CTRs).to(self.device)
+        b = torch.Tensor(bids).to(self.device)
+        logging_pp = torch.Tensor(np.array(self.propensity)).to(self.device)
+
+        self.bidding_policy.train()
+        epochs = 100
+        for epoch in range(epochs):
+            self.target_optimizer.zero_grad()
+            loss = self.bidding_policy.loss(X, V, b, logging_pp=logging_pp, utility=U)
+            loss.backward()
+            self.target_optimizer.step()
+        self.bidding_policy.eval()
+
+    def clear_logs(self, memory):
+        if memory=='inf':
+            pass
+        else:
+            self.b = self.b[-memory:]
+
+class DRBidder(Bidder):
+    def __init__(self, rng, lr, context_dim, entropy_factor):
+        super().__init__(rng)
+        self.context_dim = context_dim
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.lr = lr
+
+        self.winrate_model = NeuralWinRateEstimator(context_dim).to(self.device)
+
+        self.bidding_policy = StochasticPolicy(context_dim, 'DR', entropy_factor=entropy_factor).to(self.device)
+        self.target_optimizer = torch.optim.Adam(self.bidding_policy.parameters(), lr=self.lr, weight_decay=1e-4, amsgrad=True)
+        self.b = []
+        self.propensity = []
+    
+    def initialize(self, item_values):
+        self.item_values = item_values
+        X = []
+        y = []
+        median_value = np.median(self.item_values)
+        max_value = np.max(self.item_values)
+        for i in range(500):
+            context = self.rng.normal(0.0, 1.0, size=self.context_dim)
+            b = np.linspace(0.0, max_value , 10).reshape(-1,1)
+            y.append(np.clip(b/median_value, 0.0, 1.0))
+            X.append(np.concatenate([np.tile(context, (10,1)), b], axis=-1))
+        X_init = np.concatenate(X)
+        y_init = np.concatenate(y)
+        X = torch.Tensor(X_init).to(self.device)
+        y = torch.Tensor(y_init).to(self.device)
+
+        epochs = 10000
+        optimizer = torch.optim.Adam(self.winrate_model.parameters(), lr=self.lr, weight_decay=1e-6, amsgrad=True)
+        MSE = nn.MSELoss()
+        self.winrate_model.train()
+        for epoch in tqdm(range(epochs), desc='initializing winrate estimators'):
+            optimizer.zero_grad()
+            y_pred = self.winrate_model(X)
+            loss = MSE(y_pred, y)
+            loss.backward()
+            optimizer.step()
+        self.winrate_model.eval()
+
+    def bid(self, value, context, estimated_CTR):
+        expected_value = value * estimated_CTR
+        x = torch.Tensor(np.concatenate([context, np.array(expected_value).reshape(-1)])).to(self.device)
+        C = torch.Tensor(context).to(self.device)
+        V = torch.Tensor(np.array(value)).to(self.device)
+        with torch.no_grad():
+            bid = self.bidding_policy(x)
+            self.propensity.append(self.bidding_policy.normal_pdf(C.reshape(1,-1), V.reshape(1,1), bid).item())
+        return np.clip(bid.numpy(force=True), value*0.1, value*1.5).item()
+
+    def update(self, contexts, values, bids, prices, outcomes, estimated_CTRs, won_mask, utilities, name):
+        # update winrate estimator
+        X = np.hstack((contexts.reshape(-1,self.context_dim), bids.reshape(-1, 1)))
+        X = torch.Tensor(X).to(self.device)
+
+        y = won_mask.astype(np.float32).reshape(-1,1)
+        y = torch.Tensor(y).to(self.device)
+
+        self.winrate_model.train()
+        epochs = 100
+        optimizer = torch.optim.Adam(self.winrate_model.parameters(), lr=self.lr, weight_decay=1e-6, amsgrad=True)
+        for epoch in range(int(epochs)):
+            optimizer.zero_grad()
+            loss = self.winrate_model.loss(X, y)
+            loss.backward()
+            optimizer.step()
+        self.winrate_model.eval()
+
+        #update policy
+        X = torch.Tensor(contexts).to(self.device)
+        U = torch.Tensor(utilities).to(self.device)
+        V = torch.Tensor(values*estimated_CTRs).to(self.device)
+        b = torch.Tensor(bids).to(self.device)
+        logging_pp = torch.Tensor(np.array(self.propensity)).to(self.device)
+
+        self.bidding_policy.train()
+        self.winrate_model.requires_grad_(False)
+        epochs = 500
+        for epoch in range(epochs):
+            self.target_optimizer.zero_grad()
+            loss = self.bidding_policy.loss(X, V, b, logging_pp=logging_pp, utility=U, winrate_model=self.winrate_model)
+            loss.backward()
+            self.target_optimizer.step()
+        self.bidding_policy.eval()
+        self.winrate_model.requires_grad_(True)
 
     def clear_logs(self, memory):
         if memory=='inf':

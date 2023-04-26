@@ -19,12 +19,12 @@ class Agent:
         self.context_dim = context_dim
 
         split = random_bidding.split()
-        self.random_bidding_mode = split[0]    # uniform or gaussian noise
+        self.random_bidding_mode = split[0]    # none or uniform or gaussian noise
         if self.random_bidding_mode!='None':
             self.init_num_random_bidding = int(split[1])
             self.decay_factor = float(split[2])
 
-        self.use_optimistic_value = True
+        self.use_optimistic_value = False
 
         # Value distribution
         self.item_values = item_values
@@ -41,7 +41,7 @@ class Agent:
         self.memory = memory
     
     def should_explore(self):
-        if isinstance(self.bidder, OracleBidder):
+        if isinstance(self.bidder, OracleBidder) or self.random_bidding_mode=='None':
             return False
         if (self.allocator.mode=='TS' or self.allocator.mode=='UCB') and self.use_optimistic_value:
             return self.clock%self.update_interval < \
@@ -215,3 +215,6 @@ class Agent:
     
     def get_bidding_error(self):
         return np.array(list(opp.bidding_error for opp in self.logs[self.record_index:]))
+
+    def get_matrix(self):
+        return self.allocator.model.M.numpy(force=True)

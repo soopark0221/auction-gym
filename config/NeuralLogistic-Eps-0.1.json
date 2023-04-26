@@ -13,17 +13,18 @@
       }
     },
     {
-      "name": "Logistic-UCB(0.01)",
+      "name": "NeuralLogistic-eps(0.1)",
       "num_copies": 1,
       "num_items": 10,
         "allocator": {
-          "type": "LogisticAllocatorM",
+          "type": "NeuralLogisticAllocator",
           "kwargs": {
             "lr": 1e-3,
             "context_dim": 5,
             "num_items": 10,
-            "mode": "\"UCB\"",
-            "c": 0.01
+            "latent_dim": 32,
+            "mode": "\"Epsilon-greedy\"",
+            "eps": 0.1
           }
         },
         "bidder": {
@@ -36,6 +37,6 @@
       },
       "memory": "inf"
     }],
-    "output_dir": "results/Logistic-UCB/",
+    "output_dir": "results/NeuralLogistic-eps/",
     "network_architecture": "input-16-output"
   }

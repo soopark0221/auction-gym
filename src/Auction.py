@@ -123,7 +123,7 @@ class Auction:
             if agent.name.startswith('Competitor'):
                 CTR = agent.allocator.estimate_CTR(context)
                 expected_value = CTR*self.agents2item_values[agent.name]
-                mean = np.max(expected_value)
+                mean = np.max(expected_value) * agent.bidder.bias
                 ind = np.argmax(expected_value)
                 std = agent.bidder.noise * self.agents2item_values[agent.name][ind]
                 if std==0.0:
@@ -139,7 +139,7 @@ class Auction:
         for agent in agents:
             if agent.name.startswith('Competitor'):
                 CTR = agent.allocator.estimate_CTR(context)
-                mean = np.max(CTR*self.agents2item_values[agent.name])
+                mean = np.max(CTR*self.agents2item_values[agent.name]) * agent.bidder.bias
                 std = agent.bidder.noise
                 if std==0:
                     p *= 0 if mean>b else 1
