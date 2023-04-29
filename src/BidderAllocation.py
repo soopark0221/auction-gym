@@ -15,7 +15,7 @@ class Allocator:
     def __init__(self, rng):
         self.rng = rng
 
-    def update(self, contexts, items, outcomes, name):
+    def update(self, contexts, items, outcomes, auction_nos, name):
         pass
     
 class NeuralAllocator(Allocator):
@@ -188,8 +188,9 @@ class LogisticAllocator(Allocator):
     def get_uncertainty(self):
         return self.model.get_uncertainty()
 
+
 class LogisticAllocatorM(Allocator):
-    def __init__(self, rng, lr, context_dim, num_items, mode, c=0.0, eps=0.1, nu=0.0):
+    def __init__(self, rng, total_item_features, lr, context_dim, num_items, mode, c=0.0, eps=0.1, nu=0.0):
         super().__init__(rng)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.mode = mode
@@ -200,14 +201,12 @@ class LogisticAllocatorM(Allocator):
         self.c = c
         self.eps = eps
         self.nu = nu
-        self.out = torch.randn((self.K, 3))
-
         if self.mode=='UCB':
-            self.model = LogisticRegressionM(self.d, self.K, self.mode, self.rng, self.lr, self.out, c=self.c).to(self.device)
+            self.model = LogisticRegressionM(self.d, total_item_features, self.mode, self.rng, self.lr, c=self.c).to(self.device)
         elif self.mode=='TS':
-            self.model = LogisticRegressionM(self.d, self.K, self.mode, self.rng, self.lr, self.out, nu=self.nu).to(self.device)
+            self.model = LogisticRegressionM(self.d, total_item_features, self.mode, self.rng, self.lr, nu=self.nu).to(self.device)
         else:
-            self.model = LogisticRegressionM(self.d, self.K, self.mode, self.rng, self.lr, self.out).to(self.device)
+            self.model = LogisticRegressionM(self.d, total_item_features, self.mode, self.rng, self.lr).to(self.device)
         # self.initialize()
     
     def initialize(self):
@@ -221,11 +220,50 @@ class LogisticAllocatorM(Allocator):
 
         self.update(X, A, y, "")
 
-    def update(self, contexts, items, outcomes, name):
-        self.model.update(contexts, items, outcomes, name)
+    def update(self, contexts, items, outcomes, auction_nos, name):
+        self.model.update(contexts, items, outcomes, auction_nos, name)
 
-    def estimate_CTR(self, context, UCB=False, TS=False):
-        return self.model.estimate_CTR(context, UCB, TS)
+    def estimate_CTR(self, context, item_f, UCB=False, TS=False):
+        return self.model.estimate_CTR(context, item_f, UCB, TS)
+
+    def get_uncertainty(self):
+        return self.model.get_uncertainty()
+
+class LogisticAllocatorM_MB(Allocator):
+    def __init__(self, rng, total_item_features, lr, context_dim, num_items, mode, c=0.0, eps=0.1, nu=0.0):
+        super().__init__(rng)
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.mode = mode
+        self.lr = lr
+        self.total_item_features = total_item_features
+        self.d = context_dim
+        self.c = c
+        self.eps = eps
+        self.nu = nu
+        if self.mode=='UCB':
+            self.model = LogisticRegressionM_MB(self.d, self.total_item_features, self.mode, self.rng, self.lr, c=self.c).to(self.device)
+        elif self.mode=='TS':
+            self.model = LogisticRegressionM_MB(self.d, self.total_item_features, self.mode, self.rng, self.lr, nu=self.nu).to(self.device)
+        else:
+            self.model = LogisticRegressionM_MB(self.d, self.total_item_features, self.mode, self.rng, self.lr).to(self.device)
+        # self.initialize()
+    
+    def initialize(self):
+        X = []
+        for i in range(1000):
+            context = self.rng.normal(0.0, 1.0, size=self.d)
+            X.append(context/np.sqrt(np.sum(context**2)))
+        X = np.stack(X)
+        y = np.ones((1000,))
+        A = self.rng.choice(self.K, (1000,))
+
+        self.update(X, A, y, "")
+
+    def update(self, contexts, items, outcomes, auction_nos, name):
+        self.model.update(contexts, items, outcomes, auction_nos, name)
+
+    def estimate_CTR(self, context, item_f, UCB=False, TS=False):
+        return self.model.estimate_CTR(context, item_f, UCB, TS)
 
     def get_uncertainty(self):
         return self.model.get_uncertainty()
@@ -388,16 +426,19 @@ class NTKAllocator(Allocator):
 class OracleAllocator(Allocator):
     """ An allocator that acts based on the true P(click)"""
 
-    def __init__(self, rng):
+    def __init__(self, rng, total_item_features):
         self.item_features = None
         super(OracleAllocator, self).__init__(rng)
 
     def update_item_features(self, item_features):
         self.item_features = item_features
+    
+    def set_CTR_model(self, M):
+        self.M = M
 
-    def estimate_CTR(self, context):
+    def estimate_CTR(self, context, item_f=None):
         # Logistic
-        return sigmoid(context @ self.item_features.T / np.sqrt(self.item_features.shape[1]))
+        return sigmoid(self.item_features @ self.M.T @ context / np.sqrt(context.shape[0]*self.item_features.shape[1]))
     
     def get_uncertainty(self):
         return np.array([0])

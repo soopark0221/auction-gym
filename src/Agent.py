@@ -10,7 +10,7 @@ from Bidder import TruthfulBidder
 class Agent:
     ''' An agent representing an advertiser '''
 
-    def __init__(self, rng, name, num_items, allocator, bidder, context_dim, update_interval, random_bidding, memory):
+    def __init__(self, rng, name, num_items, allocator, bidder, context_dim, update_interval, random_bidding, memory, num_auctions):
         self.rng = rng
         self.name = name
         self.num_items = num_items
@@ -24,8 +24,8 @@ class Agent:
 
         self.use_optimistic_value = True
 
-        self.logs = [[] for _ in range(3)]
-
+        self.auction_num = num_auctions
+        self.logs = [[] for _ in range(self.auction_num)]
         self.allocator = allocator
         self.bidder = bidder
         
@@ -45,14 +45,19 @@ class Agent:
             return self.clock%self.update_interval < \
                 self.init_num_random_bidding/np.power(self.decay_factor, int(self.clock/self.update_interval))
 
-    def select_item(self, context, item_values):
+    def select_item(self, context, item_values, item_f):
         # Estimate CTR for all items
         if not isinstance(self.allocator, OracleAllocator) and self.allocator.mode=='UCB':
-            estim_CTRs = self.allocator.estimate_CTR(context, UCB=True)
+            estim_CTRs = self.allocator.estimate_CTR(context, item_f, UCB=True)
         elif not isinstance(self.allocator, OracleAllocator) and self.allocator.mode=='TS':
-            estim_CTRs = self.allocator.estimate_CTR(context, TS=True)
+            estim_CTRs = self.allocator.estimate_CTR(context, item_f, TS=True)
+            #print(f'estimate CTR {estim_CTRs}')
+
         else:
-            estim_CTRs = self.allocator.estimate_CTR(context)
+            estim_CTRs = self.allocator.estimate_CTR(context, item_f)
+            #if not isinstance(self.allocator, OracleAllocator):
+                #print(f'estimate CTR {estim_CTRs}')
+
         # Compute value if clicked
         estim_values = estim_CTRs * item_values
         best_item = np.argmax(estim_values)
@@ -62,10 +67,10 @@ class Agent:
 
         return best_item, estim_CTRs[best_item]
 
-    def bid(self, context, auction_no=0, item_values=None, value=None, prob_win=None, b_grid=None):
+    def bid(self, context, item_f, auction_no=0, item_values=None, prob_win=None, b_grid=None):
         self.clock += 1
         # First, pick what item we want to choose
-        best_item, estimated_CTR = self.select_item(context, item_values)
+        best_item, estimated_CTR = self.select_item(context, item_values, item_f)
         optimistic_CTR = estimated_CTR
 
         # Sample value for this item
@@ -89,14 +94,14 @@ class Agent:
                 self.bidder.b.append(bid)
         else:
             if not isinstance(self.allocator, OracleAllocator) and self.allocator.mode=='UCB':
-                mean_CTR = self.allocator.estimate_CTR(context, UCB=False)
+                mean_CTR = self.allocator.estimate_CTR(context, item_f, UCB=False)
                 estimated_CTR = mean_CTR[best_item]
                 if self.use_optimistic_value:
                     bid = self.bidder.bid(value, context, optimistic_CTR)
                 else:
                     bid = self.bidder.bid(value, context, estimated_CTR)
             elif not isinstance(self.allocator, OracleAllocator) and self.allocator.mode=='TS':
-                mean_CTR = self.allocator.estimate_CTR(context, TS=False)
+                mean_CTR = self.allocator.estimate_CTR(context, item_f, TS=False)
                 estimated_CTR = mean_CTR[best_item]
                 if self.use_optimistic_value:
                     bid = self.bidder.bid(value, context, optimistic_CTR)
@@ -121,7 +126,8 @@ class Agent:
                                                won=False,
                                                utility=0.0,
                                                optimal_item=False,
-                                               bidding_error=0.0))
+                                               bidding_error=0.0,
+                                               auction_no=auction_no))
 
         return bid, best_item
 
@@ -137,6 +143,31 @@ class Agent:
         if self.clock%self.update_interval:
             return
         # Gather relevant logs
+        '''
+        for i in range(self.auction_num):
+            contexts = np.array(list(opp.context for opp in self.logs[i]))
+            items = np.array(list(opp.item for opp in self.logs[i]))
+            values = np.array(list(opp.value for opp in self.logs[i]))
+            bids = np.array(list(opp.bid for opp in self.logs[i]))
+            prices = np.array(list(opp.price for opp in self.logs[i]))
+            outcomes = np.array(list(opp.outcome for opp in self.logs[i]))
+            estimated_CTRs = np.array(list(opp.estimated_CTR for opp in self.logs[i]))
+            utilities = np.array(list(opp.utility for opp in self.logs[i]))
+            auction_no = i
+            # Update response model with data from winning bids
+            won_mask = np.array(list(opp.won for opp in self.logs[i]))
+            #print(f'auction {i} {won_mask.sum()}')
+            self.allocator.update(contexts[won_mask], items[won_mask], outcomes[won_mask], auction_no, self.name)
+
+            # Update bidding model with all data
+            self.bidder.update(contexts, values, bids, prices, outcomes, estimated_CTRs, won_mask, utilities, self.name)
+
+        '''
+        if self.memory!='inf' and len(self.logs[0])>(self.memory):
+            for i in range(self.auction_num):
+                self.logs[i] = self.logs[i][-self.memory:]
+            self.bidder.b = self.bidder.b[-self.memory:]
+
         contexts = np.array([opp.context for lst in self.logs for opp in lst])
         items = np.array([opp.item for lst in self.logs for opp in lst])
         values = np.array([opp.value for lst in self.logs for opp in lst])
@@ -145,32 +176,82 @@ class Agent:
         outcomes = np.array([opp.outcome for lst in self.logs for opp in lst])
         estimated_CTRs = np.array([opp.estimated_CTR for lst in self.logs for opp in lst])
         utilities = np.array([opp.utility for lst in self.logs for opp in lst])
+        auction_nos = np.array([opp.auction_no for lst in self.logs for opp in lst ])
 
         # Update response model with data from winning bids
         won_mask = np.array([opp.won for lst in self.logs for opp in lst])
-        self.allocator.update(contexts[won_mask], items[won_mask], outcomes[won_mask], self.name)
+        print(f'winning num {self.name} {won_mask.sum()} {len(won_mask)}')
+        self.allocator.update(contexts[won_mask], items[won_mask], outcomes[won_mask], auction_nos[won_mask], self.name)
 
         # Update bidding model with all data
         self.bidder.update(contexts, values, bids, prices, outcomes, estimated_CTRs, won_mask, utilities, self.name)
+        
 
-        if self.memory!='inf' and len(self.logs)>self.memory:
-            self.logs = self.logs[-self.memory:]
-            self.bidder.b = self.bidder.b[-self.memory:]
 
-    def get_allocation_regret(self, auction_no):
+    def get_allocation_regret(self):
         ''' How much value am I missing out on due to suboptimal allocation? '''
-        return np.mean(list(opp.best_expected_value - opp.true_CTR * opp.value for opp in self.logs[auction_no][self.record_index:]))
-
+        return np.mean(list(opp.best_expected_value - opp.true_CTR * opp.value for lst in self.logs for opp in lst[self.record_index:]))
     # def get_estimation_regret(self):
     #     ''' How much am I overpaying due to over-estimation of the value? '''
     #     return np.mean(list(opp.estimated_CTR * opp.value - opp.true_CTR * opp.value for opp in self.logs[self.record_index:]))
 
-    def get_overbid_regret(self, auction_no):
+    def get_overbid_regret(self):
         ''' How much am I overpaying because I could shade more? '''
+        return np.mean(list((opp.price - opp.second_price) * opp.won for lst in self.logs for opp in lst[self.record_index:]))
+
+    def get_underbid_regret(self):
+        ''' How much have I lost because I could have shaded less? '''
+        # The difference between the winning price and our bid -- for opportunities we lost, and where we could have won without overpaying
+        # Important to mention that this assumes a first-price auction! i.e. the price is the winning bid
+        return np.mean(list((opp.price - opp.bid) * (not opp.won) * (opp.price < (opp.true_CTR * opp.value)) for lst in self.logs for opp in lst[self.record_index:]))
+
+    def get_CTR_RMSE(self):
+        return np.sqrt(np.mean(list((opp.true_CTR - opp.estimated_CTR)**2 for lst in self.logs for opp in lst[self.record_index:])))
+
+    def get_CTR_bias(self):
+        return np.mean(list((opp.estimated_CTR / opp.true_CTR) for lst in self.logs for opp in lst[self.record_index:]))
+    
+    def get_optimistic_CTR_ratio(self):
+        return np.mean(list((opp.optimistic_CTR / opp.true_CTR) for lst in self.logs for opp in lst[self.record_index:]))
+    
+    def get_uncertainty(self):
+        return self.allocator.get_uncertainty()
+    
+    def move_index(self):
+        self.record_index = len(self.logs[0])
+
+    def get_net_utility(self):
+        return np.sum(list(opp.utility for lst in self.logs for opp in lst[self.record_index:]))
+    
+    # def get_gross_utility(self):
+    #     return np.sum(list(opp.gross_utility for opp in self.logs[self.record_index:]))
+
+    def get_bid(self):
+        return np.array(self.bidder.b[self.record_index:])
+
+    def get_winning_prob(self):
+        return np.mean(list(opp.won for lst in self.logs for opp in lst[self.record_index:]))
+    
+    def get_CTRs(self):
+        return np.array(list(opp.true_CTR for lst in self.logs for opp in lst[self.record_index:]))
+
+    def get_optimal_selection_rate(self):
+        return np.mean(list(float(opp.optimal_item) for lst in self.logs for opp in lst[self.record_index:]))
+    
+    def get_bidding_error(self):
+        return np.array(list(opp.bidding_error for lst in self.logs for opp in lst[self.record_index:]))
+
+    '''
+    def get_allocation_regret(self, auction_no):
+        return np.mean(list(opp.best_expected_value - opp.true_CTR * opp.value for opp in self.logs[auction_no][self.record_index:]))
+
+    # def get_estimation_regret(self):
+    #     return np.mean(list(opp.estimated_CTR * opp.value - opp.true_CTR * opp.value for opp in self.logs[self.record_index:]))
+
+    def get_overbid_regret(self, auction_no):
         return np.mean(list((opp.price - opp.second_price) * opp.won for opp in self.logs[auction_no][self.record_index:]))
 
     def get_underbid_regret(self, auction_no):
-        ''' How much have I lost because I could have shaded less? '''
         # The difference between the winning price and our bid -- for opportunities we lost, and where we could have won without overpaying
         # Important to mention that this assumes a first-price auction! i.e. the price is the winning bid
         return np.mean(list((opp.price - opp.bid) * (not opp.won) * (opp.price < (opp.true_CTR * opp.value)) for opp in self.logs[auction_no][self.record_index:]))
@@ -210,3 +291,4 @@ class Agent:
     
     def get_bidding_error(self, auction_no):
         return np.array(list(opp.bidding_error for opp in self.logs[auction_no][self.record_index:]))
+    '''

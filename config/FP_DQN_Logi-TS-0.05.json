@@ -1,41 +1,41 @@
 {
-    "agents": [ {
-      "name": "Competitor-Truthful",
-      "num_copies": 2,
-      "num_items": 6,
-        "allocator": {
-          "type": "OracleAllocator",
-          "kwargs": {}
-        },
-        "bidder": {
-            "type": "TruthfulBidder",
-            "kwargs": {}
-      }
-    },
-    {
-      "name": "Logistic-TS(2.0)",
-      "num_copies": 1,
-      "num_items": 6,
-        "allocator": {
-          "type": "LogisticAllocator",
-          "kwargs": {
-            "lr": 1e-3,
-            "context_dim": 8,
-            "num_items": 6,
-            "mode": "\"TS\"",
-            "nu": 2.0
-          }
-        },
-        "bidder": {
-          "type": "DefaultBidder",
-          "kwargs": {
-            "lr": 1e-3,
-            "context_dim": 8,
-            "noise": 0.01
-          }
+  "agents": [ {
+    "name": "Competitor-Truthful",
+    "num_copies": 2,
+    "num_items": 10,
+      "allocator": {
+        "type": "OracleAllocator",
+        "kwargs": {}
       },
-      "memory": "inf"
-    }],
-    "output_dir": "results/Logistic-TS/",
-    "network_architecture": "input-16-output"
-  }
+      "bidder": {
+          "type": "TruthfulBidder",
+          "kwargs": {}
+    }
+  },
+  {
+    "name": "Logistic-TS(0.05)",
+    "num_copies": 1,
+    "num_items": 10,
+      "allocator": {
+        "type": "LogisticAllocatorM",
+        "kwargs": {
+          "lr": 1e-3,
+          "context_dim": 5,
+          "num_items": 10,
+          "mode": "\"TS\"",
+          "nu": 0.05
+        }
+      },
+      "bidder": {
+        "type": "DefaultBidder",
+        "kwargs": {
+          "lr": 1e-3,
+          "context_dim": 5,
+          "noise": 0.01
+        }
+    },
+    "memory": 2000
+  }],
+  "output_dir": "results/Logistic-TS/SB/",
+  "network_architecture": "input-16-output"
+}

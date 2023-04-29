@@ -11,13 +11,14 @@ from Impression import ImpressionOpportunity
 
 class Auction:
     ''' Base class for auctions '''
-    def __init__(self, rng, allocation, agents, agent2items, agents2item_values, max_slots, context_dim, obs_context_dim, context_dist, num_participants_per_round):
+    def __init__(self, rng, allocation, agents, bilinear_map, agent2items, agents2item_values, max_slots, context_dim, obs_context_dim, context_dist, num_participants_per_round):
         self.rng = rng
         self.allocation = allocation
         self.agents = agents
         self.max_slots = max_slots
         self.revenue = .0
-
+        
+        self.M = bilinear_map
         self.agent2items = agent2items
         self.agents2item_values = agents2item_values
 
@@ -40,6 +41,7 @@ class Auction:
         for agent in self.agents:
             if isinstance(agent.allocator, OracleAllocator):
                 agent.allocator.update_item_features(self.agent2items[agent.name])
+                agent.allocator.set_CTR_model(self.M)
 
     def generate_context(self):
         activation, distribution = self.context_dist.split()
@@ -57,14 +59,10 @@ class Auction:
 
     
     def CTR(self, context, item_features):
-        activation, _ = self.context_dist.split()
-        if activation=='Linear':
-            return 0.5 + 0.5 * context @ item_features.T
-        else:    # Logistic
-            return sigmoid(context @ item_features.T / np.sqrt(self.context_dim))
+        return sigmoid(item_features @ self.M.T @ context / np.sqrt(self.context_dim*item_features.shape[1]))
 
 
-    def simulate_opportunity(self, auction_no=0):
+    def simulate_opportunity(self, auction_no):
         # Sample the number of slots uniformly between [1, max_slots]
         num_slots = self.rng.integers(1, self.max_slots + 1)
 
@@ -82,23 +80,26 @@ class Auction:
         participating_agents = [self.agents[idx] for idx in participating_agents_idx]
 
         for agent in participating_agents:
-            true_CTR = self.CTR(true_context, self.agent2items[agent.name])
-            expected_value = self.agents2item_values[agent.name] * true_CTR
+            item_values = self.agents2item_values[agent.name]
+            item_f = self.agent2items[agent.name]
+            true_CTR = self.CTR(true_context, item_f)
+            expected_value = item_values * true_CTR
             best_value = np.max(expected_value)
 
             if isinstance(agent.allocator, OracleAllocator):
-                bid, item = agent.bid(true_context, auction_no=auction_no, item_values=self.agents2item_values[agent.name])
+                bid, item = agent.bid(true_context, item_f, auction_no, item_values)
             elif isinstance(agent.bidder, OracleBidder):
-                item, estimated_CTR = agent.select_item(obs_context, item_values=self.agents2item_values[agent.name])
+                item, estimated_CTR = agent.select_item(obs_context, item_f, item_values=item_values)
                 value = self.agents2item_values[agent.name][item]
                 b_grid = np.linspace(0.1*value, 1.5*value, 200)
                 prob_win = self.winrate_grid(participating_agents, true_context, b_grid)
-                bid, item = agent.bid(obs_context, auction_no, self.agents2item_values[agent.name], value, prob_win, b_grid)
+                bid, item = agent.bid(obs_context, item_f, auction_no, item_values, prob_win, b_grid)
                 utility = prob_win * (np.max(expected_value) - b_grid)
                 p = self.winrate_point(participating_agents, true_context, bid)
                 self.regret.append(np.max(utility) - p*(expected_value[item] - bid))
             else:
-                bid, item = agent.bid(obs_context, auction_no=auction_no, item_values=self.agents2item_values[agent.name])
+                #print(f'true CTR {self.CTR(true_context, item_f)}')
+                bid, item = agent.bid(obs_context, item_f, auction_no, item_values)
             bids.append(bid)
             
             agent.logs[auction_no][-1].set_true_CTR(best_value, true_CTR[item])
@@ -112,7 +113,6 @@ class Auction:
                 self.optimal_utility.append(u_optimal)
         bids = np.array(bids)
         CTRs = np.array(CTRs)
-
         # Now we have bids, we need to somehow allocate slots
         # "second_prices" tell us how much lower the winner could have gone without changing the outcome
         winners, prices, second_prices = self.allocation.allocate(bids, num_slots)

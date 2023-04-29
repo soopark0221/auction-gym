@@ -58,7 +58,7 @@ def draw_features(rng, num_runs, context_dim, agent_configs):
                 temp.append(feature / np.sqrt(np.sum(feature**2)))
             agents2items[agent_config['name']] = np.stack(temp)
         run2agents2items[run] = agents2items
-
+        
         agents2item_values = {
             # agent_config['name']: rng.lognormal(0.1, 0.2, agent_config['num_items'])
             agent_config['name']: np.ones((agent_config['num_items'],))
@@ -107,46 +107,42 @@ def instantiate_auction(rng, training_config, agents2items, agents2item_values, 
                     training_config['num_participants_per_round'])
 
 
-def simulation_run(run):
-    for agent in auction.agents:
-        if agent.name.rfind('Competitor')<0:
-            target_agent = agent
-
-    # plot_winrate(target_agent)
+def simulation_run(run, auction_ma):
 
     for i in tqdm(np.arange(1, num_iter+1), desc=f'run {run}'):
-        auction.simulate_opportunity()
+        for auction in auction_ma:
+            auction.simulate_opportunity()
 
-        if i%record_interval==0:
-            for agent_id, agent in enumerate(auction.agents):
-                agent2net_utility[agent.name].append(agent.get_net_utility())
+            if i%record_interval==0:
+                for agent_id, agent in enumerate(auction.agents):
+                    agent2net_utility[agent.name].append(agent.get_net_utility())
 
-                agent2allocation_regret[agent.name].append(agent.get_allocation_regret())
-                agent2overbid_regret[agent.name].append(agent.get_overbid_regret())
-                agent2underbid_regret[agent.name].append(agent.get_underbid_regret())
+                    agent2allocation_regret[agent.name].append(agent.get_allocation_regret())
+                    agent2overbid_regret[agent.name].append(agent.get_overbid_regret())
+                    agent2underbid_regret[agent.name].append(agent.get_underbid_regret())
 
-                agent2CTR_RMSE[agent.name].append(agent.get_CTR_RMSE())
-                agent2CTR_bias[agent.name].append(agent.get_CTR_bias())
+                    agent2CTR_RMSE[agent.name].append(agent.get_CTR_RMSE())
+                    agent2CTR_bias[agent.name].append(agent.get_CTR_bias())
 
-                agent2winning_prob[agent.name].append(agent.get_winning_prob())
-                agent2CTR[agent.name].append(agent.get_CTRs())
+                    agent2winning_prob[agent.name].append(agent.get_winning_prob())
+                    agent2CTR[agent.name].append(agent.get_CTRs())
 
-                if not isinstance(agent.bidder, TruthfulBidder):
-                    bidding.append(np.array(agent.get_bid()))
-                    uncertainty.append(agent.get_uncertainty())
-                    regret.append(auction.get_regret())
-                    optimal_selection_rate.append(agent.get_optimal_selection_rate())
-                    bidding_error.append(agent.get_bidding_error())
-                    bidding_optimal.append(auction.get_optimal_bidding())
-                    winrate_optimal.append(auction.get_winrate_optimal())
-                    utility_optimal.append(auction.get_optimal_utility())
-                    optimistic_CTR_ratio.append(agent.get_optimistic_CTR_ratio())
+                    if not isinstance(agent.bidder, TruthfulBidder):
+                        bidding.append(np.array(agent.get_bid()))
+                        uncertainty.append(agent.get_uncertainty())
+                        regret.append(auction.get_regret())
+                        optimal_selection_rate.append(agent.get_optimal_selection_rate())
+                        bidding_error.append(agent.get_bidding_error())
+                        bidding_optimal.append(auction.get_optimal_bidding())
+                        winrate_optimal.append(auction.get_winrate_optimal())
+                        utility_optimal.append(auction.get_optimal_utility())
+                        optimistic_CTR_ratio.append(agent.get_optimistic_CTR_ratio())
 
-                best_expected_value = np.mean([opp.best_expected_value for opp in agent.logs])
-                agent2best_expected_value[agent.name].append(best_expected_value)
-                agent.move_index()
-            auction_revenue.append(auction.revenue)
-            auction.clear_revenue()
+                    best_expected_value = np.mean([opp.best_expected_value for opp in agent.logs])
+                    agent2best_expected_value[agent.name].append(best_expected_value)
+                    agent.move_index()
+                auction_revenue.append(auction.revenue)
+                auction.clear_revenue()
         # if i%int(num_iter/5)==0:
         #     plot_winrate(target_agent)
 
@@ -219,7 +215,7 @@ def plot_measure_per_agent(run2agent2measure, measure_name, log_y=False, yrange=
         df = measure_per_agent2df(run2agent2measure, measure_name)
     else:
         df = run2agent2measure
-    df = df.reset_index(drop=True)
+    df = df.reset_index()
     try:
         fig, axes = plt.subplots(figsize=FIGSIZE)
         plt.title(f'{measure_name} Over Time', fontsize=FONTSIZE + 2)
@@ -339,6 +335,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('config', type=str, help='Path to experiment configuration file')
     parser.add_argument('--cuda', type=str, default='0')
+    parser.add_argument('--no_auction', type=int, default=1, help='number of auction')
+
     args = parser.parse_args()
 
     with open('config/training.json') as f:
@@ -408,6 +406,7 @@ if __name__ == '__main__':
     run2utility_optimal = {}
     run2optimistic_CTR_ratio = {}
 
+
     run2agents2items, run2agents2item_values = draw_features(rng, num_runs, context_dim, agent_configs)
 
     # Repeated runs
@@ -418,6 +417,7 @@ if __name__ == '__main__':
         auction  = instantiate_auction(
             rng, training_config, agents2items, agents2item_values, agents, max_slots, context_dim, obs_context_dim, context_dist)
         
+        auction_ma = [auction] * args.no_auction
         # Placeholders for summary statistics per run
         agent2net_utility = defaultdict(list)
         agent2allocation_regret = defaultdict(list)
@@ -447,7 +447,7 @@ if __name__ == '__main__':
         optimistic_CTR_ratio = []
 
         # Run simulation (with global parameters -- fine for the purposes of this script)
-        simulation_run(run)
+        simulation_run(run, auction_ma)
 
         # Store
         run2agent2net_utility[run] = agent2net_utility

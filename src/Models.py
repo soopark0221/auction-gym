@@ -238,7 +238,7 @@ class LogisticRegression(nn.Module):
         A = torch.LongTensor(items).to(self.device)
         y = torch.Tensor(outcomes).to(self.device)
 
-        epochs = 100
+        epochs = 200
         optimizer = torch.optim.Adam(self.parameters(), lr=self.lr, amsgrad=True)
 
         for epoch in range(int(epochs)):
@@ -295,34 +295,36 @@ class LogisticRegression(nn.Module):
         return np.concatenate(eigvals).real
 
 class LogisticRegressionM(nn.Module):
-    def __init__(self, context_dim, num_items, mode, rng, lr, out, c=1.0, nu=1.0):
+    def __init__(self, context_dim, total_item_features, mode, rng, lr, c=1.0, nu=1.0):
         super().__init__()
         self.rng = rng
         self.mode = mode
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.lr = lr
 
-        self.K = num_items
+        self.items_np = total_item_features[0]
+        self.items = torch.Tensor(total_item_features[0]).to(self.device)
+        self.K = total_item_features.shape[1] # number of items
         self.d = context_dim
-        self.h = 3
+        self.h = total_item_features.shape[2] # item feature dimension
         self.c = c
         self.nu = nu
 
-        self.o = out.to(self.device) #nn.Parameter(torch.randn((self.K, self.h)), requires_grad=False)
-        
-        self.M = nn.Parameter(torch.Tensor(self.h, self.d))
+        self.M = nn.Parameter(torch.Tensor(self.d, self.h)) # CTR = sigmoid(context @ M @ item_feature)
         nn.init.kaiming_uniform_(self.M)
 
         self.BCE = torch.nn.BCELoss(reduction='sum')
         self.uncertainty = []
         self.S0_inv = torch.Tensor(np.eye(self.h*self.d)).to(self.device)
-        self.S_inv = torch.Tensor(np.eye(self.h*self.d)).to(self.device)
+        self.S_inv = np.eye(self.h*self.d)
         self.S = torch.Tensor(np.eye(self.h*self.d)).to(self.device)
+        self.sqrt_S = torch.Tensor(np.eye(self.h*self.d)).to(self.device)
 
     def forward(self, X, A):
-        return torch.sigmoid(torch.sum(F.linear(X, self.M)*self.o[A], dim=1))
+        out = torch.sigmoid(torch.sum(F.linear(X, self.M.T)*self.items[A], dim=1))
+        return out
     
-    def update(self, contexts, items, outcomes, name):
+    def update(self, contexts, items, outcomes, auction_nos, name):
         X = torch.Tensor(contexts).to(self.device)
         A = torch.LongTensor(items).to(self.device)
         y = torch.Tensor(outcomes).to(self.device)
@@ -332,51 +334,206 @@ class LogisticRegressionM(nn.Module):
 
         for epoch in range(int(epochs)):
             optimizer.zero_grad()
-            loss = self.loss(X, A, y, self.S0_inv)
+            loss = self.loss(X, A, y)
             loss.backward()
             optimizer.step()
     
         y = self(X, A).numpy(force=True)
-        X = contexts.reshape(-1,self.d)
-        S_inv = self.S0_inv
-        for k in range(self.K):
-            mask = items==k
-            y_ = y[mask]
-            X_ = X[mask,:]
-            N = y_.shape[0]
-            y_ = y_ * (1 - y_)
-            for n in range(N):
-                # S_inv = S0_inv + sum(y(1-y) x M x M_t)
-                m = self.M.detach().clone()
-                m = self.flatten(m)
-                S_inv += y_[n] * (m @ m.T)
-        self.S = torch.inverse(torch.diag(torch.diag(S_inv)))  # torch.inverse(self.S_inv) # 
+        y = y * (1 - y)
+        contexts = contexts.reshape(-1,self.d)
 
-    def loss(self, X, A, y, S0_inv):
+        self.S_inv = self.S0_inv.numpy(force=True)
+        for i in range(contexts.shape[0]):
+            context = contexts[i]
+            item_feature = self.items_np[A[i]]
+            phi = np.outer(context, item_feature).reshape(-1)
+            self.S_inv += y[i] * np.outer(phi, phi)
+        self.S = torch.Tensor(np.diag(np.diag(self.S_inv)**(-1))).to(self.device)
+        self.sqrt_S = torch.Tensor(np.diag(np.sqrt(np.diag(self.S_inv)+1e-6)**(-1))).to(self.device)
+
+    def loss(self, X, A, y):
         y_pred = self(X, A)
+        m = self.flatten(self.M)
+        return self.BCE(y_pred, y) #+ torch.sum(m.T @ self.S0_inv @ m / 2)
+    
+    def estimate_CTR(self, context, item_f, UCB=False, TS=False):
+        # context @ M @ item_feature = M * outer(context, item_feature)
+        X = []
+        context = context.reshape(-1)
+        for i in range(self.K):
+            X.append(np.outer(context, self.items_np[i]).reshape(-1))
+        X = torch.Tensor(np.stack(X)).to(self.device)
+        with torch.no_grad():
+            if UCB:
+                m = self.flatten(self.M)
+                bound = self.c * torch.sum((X @ self.S) * X, dim=1, keepdim=True)
+                U = torch.sigmoid(X @ m + bound)
+                return U.numpy(force=True).reshape(-1)
+            elif TS:
+                m = self.flatten(self.M)
+                m = m + self.nu * self.sqrt_S @ torch.Tensor(self.rng.normal(0,1,self.d*self.h).reshape(-1,1)).to(self.device)
+                out = torch.sigmoid(X @ m)
+                return out.numpy(force=True).reshape(-1)
+            else:
+                m = self.flatten(self.M)
+                return torch.sigmoid(X @ m).numpy(force=True).reshape(-1)
+
+    def get_uncertainty(self):
+        S_ = self.S.numpy(force=True)
+        eigvals = np.linalg.eigvals(S_).reshape(-1)
+        return eigvals.real
+
+    def flatten(self, tensor):
+        return torch.reshape(tensor, (tensor.shape[0]*tensor.shape[1], -1))
+    
+    def unflatten(self, tensor, x, y):
+        return torch.reshape(tensor, (x, y))
+
+class LogisticRegressionM_MB(nn.Module):
+    def __init__(self, context_dim, total_item_features, mode, rng, lr, c=1.0, nu=1.0):
+        super().__init__()
+        self.rng = rng
+        self.mode = mode
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.lr = lr
+        self.total_item_features = total_item_features
+        self.num_auctions = self.total_item_features.shape[0]
+        self.K = 10
+        self.d = context_dim
+        self.h = self.total_item_features.shape[2]
+        self.c = c
+        self.nu = nu
+        
+
+        self.M = nn.Parameter(torch.Tensor(self.d, self.h)) # CTR = sigmoid(context @ M @ item_feature)
+        nn.init.kaiming_uniform_(self.M)
+
+        self.BCE = torch.nn.BCELoss(reduction='sum')
+        self.uncertainty = []
+        self.S0_inv = torch.Tensor(np.eye(self.h*self.d)).to(self.device)
+        self.S_inv = np.eye(self.h*self.d)
+        self.S = torch.Tensor(np.eye(self.h*self.d)).to(self.device)
+        self.sqrt_S = torch.Tensor(np.eye(self.h*self.d)).to(self.device)
+
+    def forward(self, X, A, auction_nos):
+        items = torch.tensor(self.total_item_features).to(self.device)
+        out = []
+        for i in range(X.shape[0]):
+            out.append(torch.sum(F.linear(torch.unsqueeze(X[i],0), self.M.T)*items[auction_nos[i]][A[i]], dim=1))
+        out = torch.cat(out)
+        return torch.sigmoid(out)
+
+    def loss(self, X, A, y, auction_nos):
+        m = self.flatten(self.M)
+        if X.shape[0] == 0:
+            return torch.sum(m.T @ self.S0_inv @ m / 2)
+        y_pred = self(X, A, auction_nos)
+        #print(f'ypred  {y_pred} {y}') 
+        return self.BCE(y_pred.to(torch.float64), y.to(torch.float64)) + torch.sum(m.T @ self.S0_inv @ m / 2)
+
+    def update(self, contexts, items, outcomes, auction_nos, name):
+        X = torch.Tensor(contexts).to(self.device)
+        A = torch.LongTensor(items).to(self.device)
+        y = torch.Tensor(outcomes).to(self.device)
+
+        epochs = 200
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr, amsgrad=True)
+
+        for epoch in range(int(epochs)):
+            optimizer.zero_grad()
+            loss = self.loss(X, A, y, auction_nos)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=10)
+            optimizer.step()
+
+        if X.shape[0] > 0:
+            y_pred = self(X, A, auction_nos).numpy(force=True)
+            y_pred = y_pred * (1 - y_pred)
+
+            contexts = contexts.reshape(-1,self.d)
+            self.S_inv = self.S0_inv.numpy(force=True)
+            for i in range(contexts.shape[0]):
+                context = contexts[i]
+                item_feature = self.total_item_features[auction_nos[i]][A[i]]
+                phi = np.outer(context, item_feature).reshape(-1)
+                self.S_inv += y_pred[i] * np.outer(phi, phi)
+            #self.S = torch.inverse(torch.diag(torch.diag(S_inv)))
+            self.S = torch.Tensor(np.diag(np.diag(self.S_inv)**(-1))).to(self.device)
+            self.sqrt_S = torch.Tensor(np.diag(np.sqrt(np.diag(self.S_inv)+1e-6)**(-1))).to(self.device)
+    '''
+    def forward(self, X, A, items):
+        items = torch.tensor(items).to(self.device)
+        return torch.sigmoid(torch.sum(F.linear(X, self.M.T)*items[A],dim=0))
+    
+    def update(self, contexts, items, outcomes, auction_nos, name):
+        X = torch.Tensor(contexts).to(self.device)
+        A = torch.LongTensor(items).to(self.device)
+        y = torch.Tensor(outcomes).to(self.device)
+        epochs = 100
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr, amsgrad=True)
+
+        for epoch in range(int(epochs)):
+            optimizer.zero_grad()
+            loss = self.loss(X, A, y, self.S0_inv, auction_nos)
+            loss.backward()
+            optimizer.step()
+
+        y_ = []
+        for i in range(len(y)):
+            item_f = self.total_item_features[auction_nos[i]]
+            y_.append(self(X[i], A[i], item_f).numpy(force=True))
+
+        y_ = np.array(y_)
+        y_ = y_ * (1 - y_)  # (4,)
+        contexts = contexts.reshape(-1,self.d)
+        self.S_inv = self.S0_inv.numpy(force=True)
+        for i in range(contexts.shape[0]):
+            context = contexts[i] # 5
+            auction = auction_nos[i] 
+            item_feature = self.total_item_features[auction][A[i]] # 5
+            phi = np.outer(context, item_feature).reshape(-1)
+            self.S_inv += y_[i] * np.outer(phi, phi)
+        self.S = torch.Tensor(np.diag(np.diag(self.S_inv)**(-1))).to(self.device)
+        self.sqrt_S = torch.Tensor(np.diag(np.sqrt(np.diag(self.S_inv)+1e-6)**(-1))).to(self.device)
+
+
+    def loss(self, X, A, y, S0_inv, auction_nos):
+        BCE_loss = 0
+        for i in range(len(y)):
+            item_f = self.total_item_features[auction_nos[i]]
+            y_pred = self(X[i], A[i], item_f)
+            BCE_loss += self.BCE(y_pred.to(torch.float64), y[i].to(torch.float64))
         m = self.M.detach().clone()
         m = self.flatten(m)
-        loss_t = self.BCE(y_pred, y)  + torch.sum(m.T @ S0_inv @ m/2)  
+        loss_t = BCE_loss + torch.sum(m.T @ S0_inv @ m/2)  
         return loss_t
-    
-    def estimate_CTR(self, context, UCB=False, TS=False):
-        X = torch.Tensor(context.reshape(-1)).to(self.device)
+    '''
+    def estimate_CTR(self, context, item_f, UCB=False, TS=False):
+        # context @ M @ item_feature = M * outer(context, item_feature)
+        X = []
+        context = context.reshape(-1)
+        for i in range(self.K):
+            X.append(np.outer(context, item_f[i]).reshape(-1))
+        X = torch.Tensor(np.stack(X)).to(self.device) # K x (item feature x context dim)
         with torch.no_grad():
             if UCB:
                 m = self.M.detach().clone()
                 m = self.flatten(m)
-                bound  = self.c * torch.sqrt(m.T @ self.S @ m)
-                U = torch.sigmoid(torch.matmul(self.o, torch.matmul(self.M, X) + bound))
-                return U.numpy(force=True)
+                bound = self.c * torch.sum((X @ self.S) * X, dim=1, keepdim=True)
+                U = torch.sigmoid(X @ m + bound)
+                return U.numpy(force=True).reshape(-1)
             elif TS:
                 m = self.M.detach().clone()
                 m = self.flatten(m)
-                m += self.nu * (torch.sqrt(self.S).float() @ torch.tensor(self.rng.normal(0,1,self.d*self.h)).float().to(self.device)).unsqueeze(1) # dh
-                m = self.unflatten(m, self.h, self.d)
-                out = torch.sigmoid(torch.matmul(self.o, torch.matmul(m, X)))
-                return out.numpy(force=True)
+                #print(f'before noise m is {m.detach().cpu().numpy()}')
+                m += self.nu * self.sqrt_S @ torch.Tensor(self.rng.normal(0,1,self.d*self.h).reshape(-1,1)).to(self.device) 
+                #print(f'current m is {m.detach().cpu().numpy()}')
+                out = torch.sigmoid(X @ m)
+                return out.numpy(force=True).reshape(-1)
             else:
-                return torch.sigmoid(torch.matmul(self.o, torch.matmul(self.M, X))).numpy(force=True)
+                m = self.flatten(self.M)
+                #print(f'current m is {m.detach().cpu().numpy()}')
+                return torch.sigmoid(X @ m).numpy(force=True).reshape(-1)
 
     def get_uncertainty(self):
         S_ = self.S.numpy(force=True)

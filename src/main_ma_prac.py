@@ -81,43 +81,6 @@ def draw_features(num_auctions, rng, num_runs, context_dim, feature_dim, agent_c
 
     return auction2run2agents2items, auction2run2agents2item_values, run2bilinear_map, np.array(total_item_features)
 
-'''
-def draw_features(num_auctions, rng, num_runs, context_dim, feature_dim, agent_configs):
-    auction2run2agents2items = {}
-    auction2run2agents2item_values = {}
-    run2bilinear_map = {}
-    total_item_features = [[] for _ in range(num_runs)] # run x auction num x item num x feature dim
-
-    run2agents2items = {}
-    run2agents2item_values = {}
-    for run in range(num_runs):
-        agents2items = {}
-        for agent_config in agent_configs:
-            temp = []
-            for k in range(agent_config['num_items']):
-                feature = rng.normal(0.0, 1.0, size=feature_dim)
-                temp.append(feature)
-            if "Competitor-Truthful" not in agent_config['name']:
-                total_item_features[run].append([temp]*num_auctions)
-            agents2items[agent_config['name']] = np.stack(temp)
-        run2agents2items[run] = agents2items
-
-        agents2item_values = {
-            # agent_config['name']: rng.lognormal(0.1, 0.2, agent_config['num_items'])
-            agent_config['name']: np.ones((agent_config['num_items'],))
-            for agent_config in agent_configs
-        }
-
-        run2agents2item_values[run] = agents2item_values
-        run2bilinear_map[run] = rng.normal(0.0, 1.0, size=(context_dim, feature_dim))
-
-    for auct in range(num_auctions):
-        auction2run2agents2items[auct] = run2agents2items
-        auction2run2agents2item_values[auct] = run2agents2item_values
-
-    print(np.squeeze(np.array(total_item_features), axis=1).shape)
-    return auction2run2agents2items, auction2run2agents2item_values, run2bilinear_map, np.squeeze(np.array(total_item_features), axis=1)
-'''
 def instantiate_agents(rng, agent_configs, num_auctions, total_item_features_run, obs_context_dim, update_interval, context_dist, random_bidding):
     # Store agents to be re-instantiated in subsequent runs
     # Set up agents
@@ -158,51 +121,78 @@ def simulation_run(run, multi_auctions):
             multi_auctions[j].simulate_opportunity(auction_no=j)
 
         if i%record_interval==0:
-            regret_i = 0
-            bidding_optimal_i = 0
-            winrate_optimal_i = 0
-            utility_optimal_i = 0
-            revenue_i = 0
             for agent_id, agent in enumerate(auction.agents):
-                agent2net_utility[agent.name].append(agent.get_net_utility())
+                auction2agent2net_utility[j][agent.name].append(agent.get_net_utility(j))
 
-                agent2allocation_regret[agent.name].append(agent.get_allocation_regret())
-                agent2overbid_regret[agent.name].append(agent.get_overbid_regret())
-                agent2underbid_regret[agent.name].append(agent.get_underbid_regret())
+                auction2agent2allocation_regret[j][agent.name].append(agent.get_allocation_regret(j))
+                auction2agent2overbid_regret[j][agent.name].append(agent.get_overbid_regret(j))
+                auction2agent2underbid_regret[j][agent.name].append(agent.get_underbid_regret(j))
 
-                agent2CTR_RMSE[agent.name].append(agent.get_CTR_RMSE())
-                agent2CTR_bias[agent.name].append(agent.get_CTR_bias())
+                auction2agent2CTR_RMSE[j][agent.name].append(agent.get_CTR_RMSE(j))
+                auction2agent2CTR_bias[j][agent.name].append(agent.get_CTR_bias(j))
 
-                agent2winning_prob[agent.name].append(agent.get_winning_prob())
-                agent2CTR[agent.name].append(agent.get_CTRs())
+                auction2agent2winning_prob[j][agent.name].append(agent.get_winning_prob(j))
+                auction2agent2CTR[j][agent.name].append(agent.get_CTRs(j))
 
                 if not isinstance(agent.bidder, TruthfulBidder):
-                    bidding.append(np.array(agent.get_bid()))
-                    uncertainty.append(agent.get_uncertainty())
-                    optimal_selection_rate.append(agent.get_optimal_selection_rate())
-                    bidding_error.append(agent.get_bidding_error())
-                    optimistic_CTR_ratio.append(agent.get_optimistic_CTR_ratio())
+                    bidding[j].append(np.array(agent.get_bid()))
+                    uncertainty[j].append(agent.get_uncertainty())
+                    regret[j].append(multi_auctions[j].get_regret())
+                    optimal_selection_rate[j].append(agent.get_optimal_selection_rate(j))
+                    bidding_error[j].append(agent.get_bidding_error(j))
+                    bidding_optimal[j].append(multi_auctions[j].get_optimal_bidding())
+                    winrate_optimal[j].append(multi_auctions[j].get_winrate_optimal())
+                    utility_optimal[j].append(multi_auctions[j].get_optimal_utility())
+                    optimistic_CTR_ratio[j].append(agent.get_optimistic_CTR_ratio(j))
 
-                    for idx, auc in enumerate(multi_auctions):
-                        regret_i += auc.get_regret()
-                        bidding_optimal_i += auc.get_optimal_bidding()
-                        winrate_optimal_i += auc.get_winrate_optimal()
-                        utility_optimal_i += auc.get_optimal_utility()
-
-                best_expected_value = np.mean([opp.best_expected_value for lst in agent.logs for opp in lst])
-                agent2best_expected_value[agent.name].append(best_expected_value)
-                agent.move_index()
-            for idx, auc in enumerate(multi_auctions):
-                revenue_i += auc.revenue
-                auc.clear_revenue()
-            regret.append(regret_i) 
-            bidding_optimal.append(bidding_optimal_i)
-            winrate_optimal.append(winrate_optimal_i/len(multi_auctions))
-            utility_optimal.append(utility_optimal_i) 
-            auction_revenue.append(revenue_i) 
+                best_expected_value = np.mean([opp.best_expected_value for opp in agent.logs[j]])
+                auction2agent2best_expected_value[j][agent.name].append(best_expected_value)
+                if j == len(multi_auctions)-1:
+                    agent.move_index(j)
+            auction_revenue[j].append(multi_auctions[j].revenue)
+            auction.clear_revenue()
         # if i%int(num_iter/5)==0:
         #     plot_winrate(target_agent)
+'''
+def simulation_run(run, multi_auctions):
+    for i in tqdm(np.arange(1, num_iter+1), desc=f'run {run}'):
+        for j in range(len(multi_auctions)):
+            multi_auctions[j].simulate_opportunity(auction_no=j)
 
+            if i%record_interval==0:
+                for agent_id, agent in enumerate(multi_auctions[j].agents):
+                    auction2agent2net_utility[j][agent.name].append(agent.get_net_utility(j))
+
+                    auction2agent2allocation_regret[j][agent.name].append(agent.get_allocation_regret(j))
+                    auction2agent2overbid_regret[j][agent.name].append(agent.get_overbid_regret(j))
+                    auction2agent2underbid_regret[j][agent.name].append(agent.get_underbid_regret(j))
+
+                    auction2agent2CTR_RMSE[j][agent.name].append(agent.get_CTR_RMSE(j))
+                    auction2agent2CTR_bias[j][agent.name].append(agent.get_CTR_bias(j))
+
+                    auction2agent2winning_prob[j][agent.name].append(agent.get_winning_prob(j))
+                    auction2agent2CTR[j][agent.name].append(agent.get_CTRs(j))
+
+                    if not isinstance(agent.bidder, TruthfulBidder):
+                        bidding[j].append(np.array(agent.get_bid()))
+                        uncertainty[j].append(agent.get_uncertainty())
+                        regret[j].append(multi_auctions[j].get_regret())
+                        optimal_selection_rate[j].append(agent.get_optimal_selection_rate(j))
+                        bidding_error[j].append(agent.get_bidding_error(j))
+                        bidding_optimal[j].append(multi_auctions[j].get_optimal_bidding())
+                        winrate_optimal[j].append(multi_auctions[j].get_winrate_optimal())
+                        utility_optimal[j].append(multi_auctions[j].get_optimal_utility())
+                        optimistic_CTR_ratio[j].append(agent.get_optimistic_CTR_ratio(j))
+
+                    best_expected_value = np.mean([opp.best_expected_value for opp in agent.logs[j]])
+                    auction2agent2best_expected_value[j][agent.name].append(best_expected_value)
+                    if j == len(multi_auctions)-1:
+                        agent.move_index(j)
+                auction_revenue[j].append(multi_auctions[j].revenue)
+                auction.clear_revenue()
+        # if i%int(num_iter/5)==0:
+        #     plot_winrate(target_agent)
+'''
 def plot_winrate(agent):
     global auction, obs_context_dim
     for i in range(2):
@@ -223,25 +213,29 @@ def plot_winrate(agent):
         winrate_estimation.append(np.concatenate([gamma, y], axis=1))
 
 def measure_per_agent2df(run2agent2measure, measure_name):
-        df_rows = {'Run': [], 'Agent': [], 'Step': [], measure_name: []}
+        df_rows = {'Run': [], 'Auction': [], 'Agent': [], 'Step': [], measure_name: []}
         for run, agent2measure in run2agent2measure.items():
-            for agent, measures in agent2measure.items():
-                for step, measure in enumerate(measures):
-                    df_rows['Run'].append(run)
-                    df_rows['Agent'].append(agent)
-                    df_rows['Step'].append(step)
-                    df_rows[measure_name].append(measure)
+            for auction, agents in agent2measure.items():
+                for agent, measures in agents.items():
+                    for step, measure in enumerate(measures):
+                        df_rows['Run'].append(run)
+                        df_rows['Auction'].append(auction)
+                        df_rows['Agent'].append(agent)
+                        df_rows['Step'].append(step)
+                        df_rows[measure_name].append(measure)
         return pd.DataFrame(df_rows)
     
 def vector_of_measure2df(run2vector_measure, measure_name):
-    df_rows = {'Run': [], 'Step': [], 'Index':[], measure_name: []}
+    df_rows = {'Run': [], 'Auction': [], 'Step': [], 'Index':[], measure_name: []}
     for run, vector_measures in run2vector_measure.items():
-        for step, vector in enumerate(vector_measures):
-            for (index), measure in np.ndenumerate(vector):
-                df_rows['Run'].append(run)
-                df_rows['Step'].append(step)
-                df_rows['Index'].append(index)
-                df_rows[measure_name].append(measure)
+        for i, auction in enumerate(vector_measures):
+            for step, vector in enumerate(auction):
+                for (index), measure in np.ndenumerate(vector):
+                    df_rows['Run'].append(run)
+                    df_rows['Auction'].append(i)
+                    df_rows['Step'].append(step)
+                    df_rows['Index'].append(index)
+                    df_rows[measure_name].append(measure)
     return pd.DataFrame(df_rows)
 
 def full_measure2df(run2measure, measure_name):
@@ -350,14 +344,15 @@ def plot_winrate_estimation(run2winrate_estim):
     return df
 
 def measure2df(run2measure, measure_name):
-    df_rows = {'Run': [], 'Step': [], measure_name: []}
+    df_rows = {'Run': [], 'Auction': [], 'Step': [], measure_name: []}
     for run, measures in run2measure.items():
-        for iteration, measure in enumerate(measures):
-            df_rows['Run'].append(run)
-            df_rows['Step'].append(iteration)
-            df_rows[measure_name].append(measure)
+        for i, auction in enumerate(measures):
+            for iteration, measure in enumerate(auction):
+                df_rows['Run'].append(run)
+                df_rows['Auction'].append(i)
+                df_rows['Step'].append(iteration)
+                df_rows[measure_name].append(measure)
     return pd.DataFrame(df_rows)
-
 
 def plot_measure(run2measure, measure_name, hue=None):
     # Generate DataFrame for Seaborn
@@ -386,45 +381,7 @@ def plot_measure(run2measure, measure_name, hue=None):
     plt.savefig(f"{output_dir}/{measure_name.replace(' ', '_')}.png", bbox_inches='tight')
     # plt.show()
     return df
-
-def measure2df_auc(run2measure, measure_name):
-    df_rows = {'Run': [], 'Auction': [], 'Step': [], measure_name: []}
-    for run, measures in run2measure.items():
-        for i, auction in enumerate(measures):
-            for iteration, measure in enumerate(auction):
-                df_rows['Run'].append(run)
-                df_rows['Auction'].append(i)
-                df_rows['Step'].append(iteration)
-                df_rows[measure_name].append(measure)
-    return pd.DataFrame(df_rows)
-
-def plot_measure_auc(run2measure, measure_name, hue=None):
-    # Generate DataFrame for Seaborn
-    if type(run2measure) != pd.DataFrame:
-        df = measure2df_auc(run2measure, measure_name)
-    else:
-        df = run2measure
-    df = df.reset_index()
-
-    fig, axes = plt.subplots(figsize=FIGSIZE)
-    plt.title(f'{measure_name} Over Time', fontsize=FONTSIZE + 2)
-    if hue is None:
-        sns.lineplot(data=df, x="Step", y=measure_name, ax=axes)
-    else:
-        sns.lineplot(data=df, x="Step", y=measure_name, hue=hue, ax=axes)
-    min_measure = min(0.0, np.min(df[measure_name]))
-    max_measure = max(0.0, np.max(df[measure_name]))
-    plt.xticks(fontsize=FONTSIZE - 2)
-    plt.ylabel(f'{measure_name}', fontsize=FONTSIZE)
-    plt.xlabel(f"x{record_interval} steps", fontsize=FONTSIZE)
-    factor = 1.1 if min_measure < 0 else 0.9
-    plt.ylim(min_measure * factor, max_measure * 1.1)
-    plt.yticks(fontsize=FONTSIZE - 2)
-    plt.grid(True, 'major', 'y', ls='--', lw=.5, c='k', alpha=.3)
-    plt.tight_layout()
-    plt.savefig(f"{output_dir}/{measure_name.replace(' ', '_')}.png", bbox_inches='tight')
-    # plt.show()
-    return df  
+                
 
 if __name__ == '__main__':
     # Parse commandline arguments
@@ -474,11 +431,7 @@ if __name__ == '__main__':
         os.makedirs(output_dir)
     
     shutil.copy(args.config, os.path.join(output_dir, 'agent_config.json'))
-    if args.num_auctions == 1:
-        shutil.copy('config/training.json', os.path.join(output_dir, 'training_config.json'))
-    else:
-        shutil.copy('config/training_mb.json', os.path.join(output_dir, 'training_config.json'))
-
+    shutil.copy('config/training.json', os.path.join(output_dir, 'training_config.json'))
     # Plotting config
     FIGSIZE = (8, 5)
     FONTSIZE = 14
@@ -530,47 +483,49 @@ if __name__ == '__main__':
                 rng, training_config, bilinear_map, agents2items, agents2item_values, agents, max_slots, context_dim, obs_context_dim, context_dist)
             multi_auctions.append(auction)
         
-        agent2net_utility = defaultdict(list)
-        agent2allocation_regret = defaultdict(list)
-        agent2overbid_regret = defaultdict(list)
-        agent2underbid_regret = defaultdict(list)
-        agent2best_expected_value = defaultdict(list)
+        # Placeholders for summary statistics per run
+        auction2agent2net_utility = defaultdict(lambda: defaultdict(list))
 
-        agent2CTR = defaultdict(list)
-        agent2CTR_RMSE = defaultdict(list)
-        agent2CTR_bias = defaultdict(list)
+        auction2agent2allocation_regret = defaultdict(lambda: defaultdict(list))
+        auction2agent2overbid_regret = defaultdict(lambda: defaultdict(list))
+        auction2agent2underbid_regret = defaultdict(lambda: defaultdict(list))
+        auction2agent2best_expected_value = defaultdict(lambda: defaultdict(list))
 
-        agent2winning_prob = defaultdict(list)
+        auction2agent2CTR = defaultdict(lambda: defaultdict(list))
+        auction2agent2CTR_RMSE = defaultdict(lambda: defaultdict(list))
+        auction2agent2CTR_bias = defaultdict(lambda: defaultdict(list))
 
-        bidding = []
-        uncertainty = []
-        optimal_selection_rate = []
-        bidding_error = []
-        optimistic_CTR_ratio = []
+        auction2agent2winning_prob = defaultdict(lambda: defaultdict(list))
 
-        winrate_estimation = []
-        regret = []
-        auction_revenue = []
-        winrate_optimal = []
-        bidding_optimal = []
-        utility_optimal = []
+        auction_revenue = [[] for _ in range(num_auctions)]
+        bidding = [[] for _ in range(num_auctions)]
+        uncertainty = [[] for _ in range(num_auctions)]
+        winrate_estimation = [[] for _ in range(num_auctions)]
+        regret = [[] for _ in range(num_auctions)]
+        optimal_selection_rate = [[] for _ in range(num_auctions)]
+        bidding_error = [[] for _ in range(num_auctions)]
+        winrate_optimal = [[] for _ in range(num_auctions)]
+        bidding_optimal = [[] for _ in range(num_auctions)]
+        utility_optimal = [[] for _ in range(num_auctions)]
+        optimistic_CTR_ratio = [[] for _ in range(num_auctions)]
 
         # Run simulation (with global parameters -- fine for the purposes of this script)
         simulation_run(run, multi_auctions)
 
-        run2agent2net_utility[run] = agent2net_utility
-        run2agent2allocation_regret[run] = agent2allocation_regret
-        run2agent2overbid_regret[run] = agent2overbid_regret
-        run2agent2underbid_regret[run] = agent2underbid_regret
-        run2agent2best_expected_value[run] = agent2best_expected_value
+        # Store
+        run2agent2net_utility[run] = auction2agent2net_utility
+        run2agent2allocation_regret[run] = auction2agent2allocation_regret
+        run2agent2overbid_regret[run] = auction2agent2overbid_regret
+        run2agent2underbid_regret[run] = auction2agent2underbid_regret
+        run2agent2best_expected_value[run] = auction2agent2best_expected_value
 
-        run2agent2CTR[run] = agent2CTR
-        run2agent2CTR_RMSE[run] = agent2CTR_RMSE
-        run2agent2CTR_bias[run] = agent2CTR_bias
+        run2agent2CTR[run] = auction2agent2CTR
+        run2agent2CTR_RMSE[run] = auction2agent2CTR_RMSE
+        run2agent2CTR_bias[run] = auction2agent2CTR_bias
         run2bidding[run] = bidding
 
         run2uncertainty[run] = uncertainty
-        run2agent2winning_prob[run] = agent2winning_prob
+        run2agent2winning_prob[run] = auction2agent2winning_prob
 
         run2winrate_estimation[run] = winrate_estimation
 
@@ -592,9 +547,9 @@ if __name__ == '__main__':
 
     utility_df = measure_per_agent2df(run2agent2net_utility, 'Utility')
     optimal_utility_df = measure2df(run2utility_optimal, 'Utility')
-    optimal_utility_df['Agent'] = 'Optimal'    
-    utility_df = pd.concat([utility_df, optimal_utility_df]).sort_values(['Agent', 'Run', 'Step'])
-    utility_df['Utility (Cumulative)'] = utility_df.groupby(['Agent', 'Run'])['Utility'].cumsum()
+    optimal_utility_df['Agent'] = 'Optimal'
+    utility_df = pd.concat([utility_df, optimal_utility_df]).sort_values(['Agent', 'Run', 'Step', 'Auction'])
+    utility_df['Utility (Cumulative)'] = utility_df.groupby(['Agent', 'Run', 'Auction'])['Utility'].cumsum()
     plot_measure_per_agent(utility_df, 'Utility')
     plot_measure_per_agent(utility_df, 'Utility (Cumulative)')
     utility_df.to_csv(f'{output_dir}/net_utility.csv', index=False)
@@ -607,6 +562,7 @@ if __name__ == '__main__':
     overbid_regret_df.to_csv(f'{output_dir}/overbid_regret.csv', index=False)
     underbid_regret_df = plot_measure_per_agent(run2agent2underbid_regret, 'Underbid Regret')
     underbid_regret_df.to_csv(f'{output_dir}/underbid_regret.csv', index=False)
+
     plot_measure(run2auction_revenue, 'Auction Revenue')
 
     uncertainty_df = plot_vector_measure(run2uncertainty, 'Uncertainty in Parameters')
@@ -638,7 +594,7 @@ if __name__ == '__main__':
     # bidding_df.to_csv(f'{output_dir}/Bidding.csv', index=False)
 
     regret_df = measure2df(run2regret, f'Regret({record_interval}steps)')
-    regret_df['Regret'] = regret_df.groupby(['Run'])[f'Regret({record_interval}steps)'].cumsum()
+    regret_df['Regret'] = regret_df.groupby(['Run', 'Auction'])[f'Regret({record_interval}steps)'].cumsum()
     regret_df.to_csv(f'{output_dir}/regret.csv', index=False)
     plot_measure(regret_df, 'Regret')
 

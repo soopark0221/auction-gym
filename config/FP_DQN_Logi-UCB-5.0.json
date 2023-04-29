@@ -1,41 +1,41 @@
 {
-    "agents": [ {
-      "name": "Competitor-Truthful",
-      "num_copies": 2,
-      "num_items": 6,
-        "allocator": {
-          "type": "OracleAllocator",
-          "kwargs": {}
-        },
-        "bidder": {
-            "type": "TruthfulBidder",
-            "kwargs": {}
-      }
-    },
-    {
-      "name": "Logistic-UCB(5.0)",
-      "num_copies": 1,
-      "num_items": 6,
-        "allocator": {
-          "type": "LogisticAllocator",
-          "kwargs": {
-            "lr": 1e-3,
-            "context_dim": 8,
-            "num_items": 6,
-            "mode": "\"UCB\"",
-            "c": 5.0
-          }
-        },
-        "bidder": {
-          "type": "DefaultBidder",
-          "kwargs": {
-            "lr": 1e-3,
-            "context_dim": 8,
-            "noise": 0.01
-          }
+  "agents": [ {
+    "name": "Competitor-Truthful",
+    "num_copies": 2,
+    "num_items": 10,
+      "allocator": {
+        "type": "OracleAllocator",
+        "kwargs": {}
       },
-      "memory": "inf"
-    }],
-    "output_dir": "results/Logistic-UCB/",
-    "network_architecture": "input-16-output"
-  }
+      "bidder": {
+          "type": "TruthfulBidder",
+          "kwargs": {}
+    }
+  },
+  {
+    "name": "Logistic-UCB(5.0)",
+    "num_copies": 1,
+    "num_items": 10,
+      "allocator": {
+        "type": "LogisticAllocatorM",
+        "kwargs": {
+          "lr": 1e-3,
+          "context_dim": 5,
+          "num_items": 10,
+          "mode": "\"UCB\"",
+          "c": 5.0
+        }
+      },
+      "bidder": {
+        "type": "DefaultBidder",
+        "kwargs": {
+          "lr": 1e-3,
+          "context_dim": 5,
+          "noise": 0.01
+        }
+    },
+    "memory": "inf"
+  }],
+  "output_dir": "results/Logistic-UCB-f/SB/",
+  "network_architecture": "input-16-output"
+}

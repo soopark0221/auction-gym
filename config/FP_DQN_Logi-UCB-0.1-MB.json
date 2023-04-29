@@ -13,17 +13,17 @@
       }
     },
     {
-      "name": "Logistic-TS(0.1)",
+      "name": "Logistic-UCB(0.1)",
       "num_copies": 1,
       "num_items": 10,
         "allocator": {
-          "type": "LogisticAllocatorM",
+          "type": "LogisticAllocatorM_MB",
           "kwargs": {
             "lr": 1e-3,
             "context_dim": 5,
             "num_items": 10,
-            "mode": "\"TS\"",
-            "nu": 0.1
+            "mode": "\"UCB\"",
+            "c": 0.1
           }
         },
         "bidder": {
@@ -36,6 +36,6 @@
       },
       "memory": "inf"
     }],
-    "output_dir": "results/Logistic-TS-f/SB/",
+    "output_dir": "results/Logistic-UCB-f/MB/",
     "network_architecture": "input-16-output"
   }

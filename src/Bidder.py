@@ -32,9 +32,11 @@ class TruthfulBidder(Bidder):
         super(TruthfulBidder, self).__init__(rng)
         self.truthful = True
         self.noise = noise
+        self.b = []
 
     def bid(self, value, context, estimated_CTR):
-        bid = value * (estimated_CTR + self.rng.normal(0,self.noise,1))
+        bid = value * (estimated_CTR*0.9)
+        self.b.append(bid.item())
         return bid.item()
 
 class DQNBidder(Bidder):

@@ -2,7 +2,7 @@
     "agents": [ {
       "name": "Competitor-Truthful",
       "num_copies": 2,
-      "num_items": 6,
+      "num_items": 10,
         "allocator": {
           "type": "OracleAllocator",
           "kwargs": {}
@@ -17,13 +17,13 @@
     {
       "name": "Logistic-eps(0.0)",
       "num_copies": 1,
-      "num_items": 6,
+      "num_items": 10,
         "allocator": {
-          "type": "LogisticAllocator",
+          "type": "LogisticAllocatorM",
           "kwargs": {
             "lr": 1e-3,
-            "context_dim": 8,
-            "num_items": 6,
+            "context_dim": 5,
+            "num_items": 10,
             "mode": "\"Epsilon-greedy\"",
             "eps": 0.0
           }
@@ -32,12 +32,12 @@
           "type": "DefaultBidder",
           "kwargs": {
             "lr": 1e-3,
-            "context_dim": 8,
+            "context_dim": 5,
             "noise": 0.01
           }
       },
       "memory": "inf"
     }],
-    "output_dir": "results/Logistic-eps/",
+    "output_dir": "results/Logistic-eps-f/SB/",
     "network_architecture": "input-16-output"
   }

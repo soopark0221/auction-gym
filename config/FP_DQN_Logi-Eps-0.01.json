@@ -19,7 +19,7 @@
       "num_copies": 1,
       "num_items": 6,
         "allocator": {
-          "type": "LogisticAllocator",
+          "type": "LogisticAllocatorM",
           "kwargs": {
             "lr": 1e-3,
             "context_dim": 8,
@@ -38,6 +38,6 @@
       },
       "memory": "inf"
     }],
-    "output_dir": "results/Logistic-eps/",
+    "output_dir": "results/Logistic-eps-f/SB/",
     "network_architecture": "input-16-output"
   }
