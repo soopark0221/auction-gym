@@ -573,6 +573,7 @@ if __name__ == '__main__':
                 df_rows['Item'].append(item)
                 df_rows['Selection'].append(number)
     df = pd.DataFrame(df_rows)
+    df.to_csv(f'{output_dir}/selection.csv', index=False)
 
     fig, axes = plt.subplots(figsize=FIGSIZE)
     plt.title(f'Number of Selection Over Time', fontsize=FONTSIZE + 2)

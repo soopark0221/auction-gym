@@ -36,7 +36,7 @@ class AllocationDataset(Dataset):
         return self.x[index], self.y[index]
     
 class NeuralAllocator(Allocator):
-    def __init__(self, rng, item_features, lr, num_layers, num_epochs, context_dim, num_items, mode, latent_dim, eps=None, prior_var=None):
+    def __init__(self, rng, item_features, lr, batch_size, weight_decay, num_layers, latent_dim, num_epochs, context_dim, num_items, mode,  eps=None, prior_var=None):
         super().__init__(rng, item_features)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.mode = mode
@@ -52,8 +52,9 @@ class NeuralAllocator(Allocator):
             self.net = BayesianNeuralRegression(context_dim+self.item_features.shape[1], latent_dim, prior_var).to(self.device)
         self.count = 0
         self.lr = lr
+        self.batch_size = batch_size
+        self.weight_decay = weight_decay
         self.optimizer = torch.optim.Adam(self.net.parameters(), lr=self.lr, weight_decay=1e-6, amsgrad=True)
-        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer)
 
     def update(self, contexts, items, outcomes, name):
         self.count += 1
@@ -65,10 +66,11 @@ class NeuralAllocator(Allocator):
             return
 
         self.net.train()
-        batch_size = 512
+        batch_size = min(N, self.batch_size)
 
         for epoch in range(int(self.num_epochs)):
             shuffled_ind = self.rng.choice(N, size=N, replace=False)
+            epoch_loss = 0
             for i in range(int(N/batch_size)):
                 self.optimizer.zero_grad()
                 ind = shuffled_ind[i*batch_size:(i+1)*batch_size]
@@ -80,7 +82,7 @@ class NeuralAllocator(Allocator):
                     loss = self.net.loss(self.net(X_).squeeze(), y_, N)
                 loss.backward()
                 self.optimizer.step()
-                self.scheduler.step(loss)
+                epoch_loss += loss.item()
         self.net.eval()
 
     def estimate_CTR(self, context, TS=False):

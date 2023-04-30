@@ -86,8 +86,8 @@ if __name__=='__main__':
 
     for run in range(NUM_RUNS):
         feature, M = draw_feature()
-        model = NeuralAllocator(rng, feature, config['lr'], config['num_layers'], config['num_epochs'],
-                                CONTEXT_DIM, NUM_ITEMS, 'Epsilon-greedy', config['latent_dim'], config['eps'])
+        model = NeuralAllocator(rng, feature, config['lr'], config['batch_size'], config['weight_decay'], config['num_layers'], config['latent_dim'], config['num_epochs'],
+                                CONTEXT_DIM, NUM_ITEMS, 'Epsilon-greedy', config['eps'])
 
         context = []
         item = []
@@ -104,10 +104,12 @@ if __name__=='__main__':
         outcome = np.stack(outcome)
 
         temp = []
-        for i in tqdm(range(500)):
+        for i in tqdm(range(100)):
             model.update(context, item, outcome, '...')
             if (i+1)%5==0:
-                temp.append(validate(model, feature))
+                val = validate(model, feature)
+                print('valudation: ' + str(val))
+                temp.append(val)
         error.append(temp)
         
     

@@ -64,7 +64,7 @@ class Agent:
         estim_values = estim_CTRs * self.item_values
         best_item = np.argmax(estim_values)
         if not isinstance(self.allocator, OracleAllocator) and self.allocator.mode=='Epsilon-greedy':
-            if self.clock < 10000 or self.rng.uniform(0,1)<self.allocator.eps:
+            if self.rng.uniform(0,1)<self.allocator.eps:
                 best_item = self.rng.choice(self.num_items, 1).item()
 
         return best_item, estim_CTRs[best_item]

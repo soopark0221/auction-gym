@@ -410,7 +410,7 @@ class LogisticRegressionS(nn.Module):
 
         self.BCE = torch.nn.BCELoss(reduction='sum')
         self.uncertainty = []
-    
+
     def forward(self, X):
         return torch.sigmoid(X @ self.m.T)
 
@@ -508,7 +508,7 @@ class NeuralRegression(nn.Module):
         self.head.weight.data=torch.cat([last_init,-last_init],axis=1)
         
     def forward(self, x):
-        x = torch.relu(self.feature(x))
+        x = torch.sigmoid(self.feature(x))
         return torch.sigmoid(self.head(x))
 
     def loss(self, predictions, labels):
@@ -527,8 +527,8 @@ class NeuralRegression2(nn.Module):
         self.eval()
 
     def forward(self, x):
-        x = torch.relu(self.linear1(x))
-        x = torch.relu(self.linear2(x))
+        x = torch.sigmoid(self.linear1(x))
+        x = torch.sigmoid(self.linear2(x))
         return torch.sigmoid(self.head(x))
 
     def loss(self, predictions, labels):
@@ -806,10 +806,11 @@ class BayesianStochasticPolicy(nn.Module):
         return np.concatenate(uncertainties)
         
 class StochasticPolicy(nn.Module):
-    def __init__(self, context_dim, loss_type, use_WIS=True, entropy_factor=None):
+    def __init__(self, context_dim, loss_type, use_WIS=True, entropy_factor=None, weight_clip=None):
         super().__init__()
         self.use_WIS = use_WIS
         self.entropy_factor = entropy_factor
+        self.weight_clip = weight_clip
         
         self.base = nn.Linear(context_dim + 1, 16)
         self.mu_head = nn.Linear(16, 1)
@@ -843,7 +844,7 @@ class StochasticPolicy(nn.Module):
         dist = torch.distributions.Normal(mu, sigma)
         return torch.exp(dist.log_prob(bid.reshape(-1,1)))
 
-    def loss(self, context, estimated_value, bid, logging_pp=None, utility=None, winrate_model=None, weight_clip=1e4):
+    def loss(self, context, estimated_value, bid, logging_pp=None, utility=None, winrate_model=None):
         input_policy = torch.cat([context, estimated_value.reshape(-1,1)], dim=1)
         if self.loss_type=='Cloning':
             b_pred = self(input_policy).squeeze()
@@ -851,18 +852,24 @@ class StochasticPolicy(nn.Module):
 
         if self.loss_type == 'REINFORCE':
             target_pp = self.normal_pdf(context, estimated_value, bid).reshape(-1)
-            importance_weights = torch.clip(target_pp/(logging_pp+1e-6), 1/weight_clip, weight_clip)
+            importance_weights = torch.clip(target_pp/(logging_pp+1e-6), 1/self.weight_clip, self.weight_clip)
             if self.use_WIS:
-                importance_weights = importance_weights / torch.sum(importance_weights)
-            loss =  torch.mean(-importance_weights * utility)
-        
+                N = context.size(0)
+                loss = torch.tensor(0, dtype=float).to(self.device)
+                for i in range(int(N/100)):
+                    weighted_IW = importance_weights[i*100:(i+1)*100] / torch.sum(importance_weights[i*100:(i+1)*100])
+                    loss += torch.sum(weighted_IW * utility[i*100:(i+1)*100])
+                loss /= N
+            else:
+                loss = torch.mean(-importance_weights * utility)
+            
         elif self.loss_type == 'Actor-Critic':
             target_pp = self.normal_pdf(context, estimated_value, bid).reshape(-1)
             input_winrate = torch.cat([context, bid.reshape(-1,1)], dim=1)
 
             winrate = winrate_model(input_winrate)
             utility_estimates = winrate * (estimated_value - bid)
-            importance_weights = torch.clip(target_pp/(logging_pp+1e-6), 1/weight_clip, weight_clip)
+            importance_weights = torch.clip(target_pp/(logging_pp+1e-6), 1/self.weight_clip, self.weight_clip)
             loss = - importance_weights * utility_estimates.reshape(-1)
 
         elif self.loss_type == 'DR':
@@ -873,16 +880,14 @@ class StochasticPolicy(nn.Module):
             winrate = winrate_model(input_winrate).reshape(-1)
             q_estimate = winrate * (estimated_value - bid)
 
-            IS = (utility - q_estimate) * torch.clip(importance_weights, 1/weight_clip, weight_clip)
+            IS = (utility - q_estimate) * torch.clip(importance_weights, 1/self.weight_clip, self.weight_clip)
 
             # Monte Carlo approximation of V(context)
             v_estimate = winrate_model(input_winrate).reshape(-1) * (estimated_value - bid)
 
             loss = -torch.mean(v_estimate + IS)
         
-        if self.loss_type=='Cloning':
-            loss -= 0.1 * self.entropy(context, estimated_value)
-        else:
+        if self.loss_type!='Cloning':
             loss -= self.entropy_factor * self.entropy(context, estimated_value)
         
         return loss
