@@ -712,16 +712,44 @@ class DefaultBidder(Bidder):
             self.b = self.b[-memory:]
 
 class IPSBidder(Bidder):
-    def __init__(self, rng, lr, context_dim, entropy_factor, use_WIS=False):
+    def __init__(self, rng, lr, context_dim, entropy_factor, use_WIS=False, weight_clip=1e2):
         super().__init__(rng)
         self.context_dim = context_dim
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.lr = lr
 
-        self.bidding_policy = StochasticPolicy(context_dim, 'REINFORCE', use_WIS=use_WIS, entropy_factor=entropy_factor).to(self.device)
+        self.bidding_policy = StochasticPolicy(context_dim, 'REINFORCE', use_WIS=use_WIS, entropy_factor=entropy_factor, weight_clip=weight_clip).to(self.device)
         self.target_optimizer = torch.optim.Adam(self.bidding_policy.parameters(), lr=self.lr, weight_decay=1e-4, amsgrad=True)
         self.b = []
         self.propensity = []
+
+    def initialize(self, item_values):
+        self.item_values = item_values
+
+        # initialize bidding policy
+        X = []
+        max_value = np.max(self.item_values)
+        v = np.linspace(0.0, max_value , 10).reshape(-1,1)
+        for i in range(500):
+            context = self.rng.normal(0.0, 1.0, size=self.context_dim)
+            X.append(np.concatenate([np.tile(context.reshape(1,-1), (10,1)), v], axis=1))
+        X_init = np.concatenate(X)
+        mu_init = np.tile(v, (500,1))
+        X = torch.Tensor(X_init).to(self.device)
+        mu = torch.Tensor(mu_init).to(self.device)
+        std = torch.ones_like(mu).to(self.device) * 0.1 * max_value
+
+        epochs = 10000
+        optimizer = torch.optim.Adam(self.bidding_policy.parameters(), lr=self.lr, weight_decay=1e-6, amsgrad=True)
+        self.bidding_policy.train()
+        MSE = nn.MSELoss()
+        for epoch in tqdm(range(epochs), desc='initializing bidding policy'):
+            optimizer.zero_grad()
+            loss = MSE(self.bidding_policy.mu(X).squeeze(), mu.squeeze())
+            loss += MSE(self.bidding_policy.sigma(X).squeeze(), std.squeeze())
+            loss.backward()
+            optimizer.step()
+        self.bidding_policy.eval()
 
     def bid(self, value, context, estimated_CTR):
         expected_value = value * estimated_CTR
@@ -741,12 +769,17 @@ class IPSBidder(Bidder):
         logging_pp = torch.Tensor(np.array(self.propensity)).to(self.device)
 
         self.bidding_policy.train()
-        epochs = 100
+        N = X.size(0)
+        batch_size = 512
+        epochs = 500
         for epoch in range(epochs):
-            self.target_optimizer.zero_grad()
-            loss = self.bidding_policy.loss(X, V, b, logging_pp=logging_pp, utility=U)
-            loss.backward()
-            self.target_optimizer.step()
+            for _ in range(int(N/batch_size)):
+                self.optimizer.zero_grad()
+                ind = self.rng.choice(N)
+                self.target_optimizer.zero_grad()
+                loss = self.bidding_policy.loss(X[ind], V[ind], b[ind], logging_pp=logging_pp[ind], utility=U[ind])
+                loss.backward()
+                self.target_optimizer.step()
         self.bidding_policy.eval()
 
     def clear_logs(self, memory):
@@ -756,7 +789,7 @@ class IPSBidder(Bidder):
             self.b = self.b[-memory:]
 
 class DRBidder(Bidder):
-    def __init__(self, rng, lr, context_dim, entropy_factor):
+    def __init__(self, rng, lr, context_dim, entropy_factor=None, weight_clip=None):
         super().__init__(rng)
         self.context_dim = context_dim
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -764,13 +797,15 @@ class DRBidder(Bidder):
 
         self.winrate_model = NeuralWinRateEstimator(context_dim).to(self.device)
 
-        self.bidding_policy = StochasticPolicy(context_dim, 'DR', entropy_factor=entropy_factor).to(self.device)
+        self.bidding_policy = StochasticPolicy(context_dim, 'DR', entropy_factor=entropy_factor, weight_clip=weight_clip).to(self.device)
         self.target_optimizer = torch.optim.Adam(self.bidding_policy.parameters(), lr=self.lr, weight_decay=1e-4, amsgrad=True)
         self.b = []
         self.propensity = []
     
     def initialize(self, item_values):
         self.item_values = item_values
+
+        # initialize winrate estimator
         X = []
         y = []
         median_value = np.median(self.item_values)
@@ -796,6 +831,30 @@ class DRBidder(Bidder):
             loss.backward()
             optimizer.step()
         self.winrate_model.eval()
+
+        # initialize bidding policy
+        X = []
+        v = np.linspace(0.0, max_value , 10).reshape(-1,1)
+        for i in range(500):
+            context = self.rng.normal(0.0, 1.0, size=self.context_dim)
+            X.append(np.concatenate([np.tile(context.reshape(1,-1), (10,1)), v], axis=-1))
+        X_init = np.concatenate(X)
+        mu_init = np.tile(v, (500,1))
+        X = torch.Tensor(X_init).to(self.device)
+        mu = torch.Tensor(mu_init).to(self.device)
+        std = torch.ones_like(mu).to(self.device) * 0.1 * max_value
+
+        epochs = 10000
+        optimizer = torch.optim.Adam(self.bidding_policy.parameters(), lr=self.lr, weight_decay=1e-6, amsgrad=True)
+        self.bidding_policy.train()
+        MSE = nn.MSELoss()
+        for epoch in tqdm(range(epochs), desc='initializing bidding policy'):
+            optimizer.zero_grad()
+            loss = MSE(self.bidding_policy.mu(X).squeeze(), mu.squeeze())
+            loss += MSE(self.bidding_policy.std(X).squeeze(), std.squeeze())
+            loss.backward()
+            optimizer.step()
+        self.bidding_policy.eval()
 
     def bid(self, value, context, estimated_CTR):
         expected_value = value * estimated_CTR
@@ -834,12 +893,17 @@ class DRBidder(Bidder):
 
         self.bidding_policy.train()
         self.winrate_model.requires_grad_(False)
+        N = X.size(0)
+        batch_size = 512
         epochs = 500
         for epoch in range(epochs):
-            self.target_optimizer.zero_grad()
-            loss = self.bidding_policy.loss(X, V, b, logging_pp=logging_pp, utility=U, winrate_model=self.winrate_model)
-            loss.backward()
-            self.target_optimizer.step()
+            for _ in range(int(N/batch_size)):
+                self.optimizer.zero_grad()
+                ind = self.rng.choice(N)
+                self.target_optimizer.zero_grad()
+                loss = self.bidding_policy.loss(X[ind], V[ind], b[ind], logging_pp=logging_pp[ind], utility=U[ind])
+                loss.backward()
+                self.target_optimizer.step()
         self.bidding_policy.eval()
         self.winrate_model.requires_grad_(True)
 
@@ -848,3 +912,12 @@ class DRBidder(Bidder):
             pass
         else:
             self.b = self.b[-memory:]
+
+class RichBidder(Bidder):
+    def __init__(self, rng):
+        super().__init__(rng)
+        self.b = []
+
+    def bid(self, value, context, estimated_CTR):
+        self.b.append(value*2.0)
+        return value * 2.0

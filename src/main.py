@@ -91,8 +91,10 @@ def instantiate_agents(rng, agent_configs, agents2item_values, agents2item_featu
     for agent in agents:
         if isinstance(agent.allocator, OracleAllocator):
             agent.allocator.set_CTR_model(bilinear_map)
-        if isinstance(agent.bidder, DefaultBidder) or isinstance(agent.bidder, DRBidder):
+        try:
             agent.bidder.initialize(agents2item_values[agent.name])
+        except:
+            pass
 
     return agents
 
@@ -149,6 +151,7 @@ def simulation_run(run):
                         matrix_error.append(np.sqrt(np.sum((auction.M.T-agent.get_matrix())**2)))
                     else:
                         matrix_error.append(0.0)
+                    item_selection.append(agent.get_item_selection())
 
                 best_expected_value = np.mean([opp.best_expected_value for opp in agent.logs])
                 agent2best_expected_value[agent.name].append(best_expected_value)
@@ -418,6 +421,7 @@ if __name__ == '__main__':
     run2optimistic_CTR_ratio = {}
 
     run2matrix_error = {}
+    run2item_selection = {}
 
     run2agents2items, run2agents2item_values, run2bilinear_map = draw_features(rng, num_runs, context_dim, feature_dim, agent_configs)
 
@@ -459,6 +463,7 @@ if __name__ == '__main__':
         optimistic_CTR_ratio = []
 
         matrix_error =[]
+        item_selection = []
 
         # Run simulation (with global parameters -- fine for the purposes of this script)
         simulation_run(run)
@@ -490,6 +495,7 @@ if __name__ == '__main__':
         run2optimistic_CTR_ratio[run] = optimistic_CTR_ratio
         
         run2matrix_error[run] = matrix_error
+        run2item_selection[run] = item_selection
 
 
     plot_vector_measure(run2bidding_error, 'Bidding Error')
@@ -557,3 +563,28 @@ if __name__ == '__main__':
 
     matrix_error_df = measure2df(run2matrix_error, 'Matrix L2 Error')
     plot_measure(matrix_error_df, 'Matrix L2 Error')
+
+    df_rows = {'Run': [], 'Step': [], 'Item': [], 'Selection': []}
+    for run, list in run2item_selection.items():
+        for step, array in enumerate(list):
+            for (item,), number in np.ndenumerate(array):
+                df_rows['Run'].append(run)
+                df_rows['Step'].append(step)
+                df_rows['Item'].append(item)
+                df_rows['Selection'].append(number)
+    df = pd.DataFrame(df_rows)
+
+    fig, axes = plt.subplots(figsize=FIGSIZE)
+    plt.title(f'Number of Selection Over Time', fontsize=FONTSIZE + 2)
+    sns.lineplot(data=df, x="Step", y="Selection", hue=['Run', 'Item'], ax=axes)
+    min_measure = min(0.0, np.min(df['Selection']))
+    max_measure = max(0.0, np.max(df['Selection']))
+    plt.xticks(fontsize=FONTSIZE - 2)
+    plt.ylabel('#of Selection', fontsize=FONTSIZE)
+    plt.xlabel(f"x{record_interval} steps", fontsize=FONTSIZE)
+    factor = 1.1 if min_measure < 0 else 0.9
+    plt.ylim(min_measure * factor, max_measure * 1.1)
+    plt.yticks(fontsize=FONTSIZE - 2)
+    plt.grid(True, 'major', 'y', ls='--', lw=.5, c='k', alpha=.3)
+    plt.tight_layout()
+    plt.savefig(f"{output_dir}/item_selection.png", bbox_inches='tight')

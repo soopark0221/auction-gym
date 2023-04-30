@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from torch.utils.data import Dataset, DataLoader
 from sklearn.metrics import log_loss, roc_auc_score
 from sklearn.model_selection import train_test_split
 from tqdm import tqdm
@@ -20,21 +21,39 @@ class Allocator:
 
     def update(self, contexts, items, outcomes, name):
         pass
+
+class AllocationDataset(Dataset):
+    def __init__(self, x, y):
+        super().__init__()
+        assert x.shape[0] == y.shape[0]
+        self.x = x
+        self.y = y
+
+    def __len__(self):
+        return self.y.shape[0]
+
+    def __getitem__(self, index):
+        return self.x[index], self.y[index]
     
 class NeuralAllocator(Allocator):
-    def __init__(self, rng, item_features, lr, context_dim, num_items, mode, latent_dim, eps=None, prior_var=None):
+    def __init__(self, rng, item_features, lr, num_layers, num_epochs, context_dim, num_items, mode, latent_dim, eps=None, prior_var=None):
         super().__init__(rng, item_features)
-        self.mode = mode
-        if self.mode=='Epsilon-greedy':
-            self.net = NeuralRegression2(context_dim+self.feature_dim, latent_dim)
-            self.eps = eps
-        else:
-            self.net = BayesianNeuralRegression(context_dim+self.item_features.shape[1], latent_dim, prior_var)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.net.to(self.device)
+        self.mode = mode
+        self.num_epochs = num_epochs
+        if self.mode=='Epsilon-greedy':
+            if num_layers==1:
+                self.net = NeuralRegression(context_dim+self.feature_dim, latent_dim).to(self.device)
+                self.eps = eps
+            else:
+                self.net = NeuralRegression2(context_dim+self.feature_dim, latent_dim).to(self.device)
+                self.eps = eps
+        else:
+            self.net = BayesianNeuralRegression(context_dim+self.item_features.shape[1], latent_dim, prior_var).to(self.device)
         self.count = 0
         self.lr = lr
-        self.optimizer = torch.optim.Adam(self.net.parameters(), lr=self.lr)
+        self.optimizer = torch.optim.Adam(self.net.parameters(), lr=self.lr, weight_decay=1e-6, amsgrad=True)
+        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer)
 
     def update(self, contexts, items, outcomes, name):
         self.count += 1
@@ -46,16 +65,22 @@ class NeuralAllocator(Allocator):
             return
 
         self.net.train()
-        epochs = 5000
+        batch_size = 512
 
-        for epoch in range(int(epochs)):
-            self.optimizer.zero_grad()
-            if self.mode=='Epsilon-greedy':
-                loss = self.net.loss(self.net(X).squeeze(), y)
-            elif self.mode=='TS':
-                loss = self.net.loss(self.net(X).squeeze(), y, N)
-            loss.backward()
-            self.optimizer.step()
+        for epoch in range(int(self.num_epochs)):
+            shuffled_ind = self.rng.choice(N, size=N, replace=False)
+            for i in range(int(N/batch_size)):
+                self.optimizer.zero_grad()
+                ind = shuffled_ind[i*batch_size:(i+1)*batch_size]
+                X_ = X[ind]
+                y_ = y[ind]
+                if self.mode=='Epsilon-greedy':
+                    loss = self.net.loss(self.net(X_).squeeze(), y_)
+                elif self.mode=='TS':
+                    loss = self.net.loss(self.net(X_).squeeze(), y_, N)
+                loss.backward()
+                self.optimizer.step()
+                self.scheduler.step(loss)
         self.net.eval()
 
     def estimate_CTR(self, context, TS=False):
@@ -74,7 +99,7 @@ class NeuralAllocator(Allocator):
             return self.net.get_uncertainty()
         else:
             return np.array([0])
-    
+
 class LinearAllocator(Allocator):
     def __init__(self, rng, context_dim, mode, c=0.0, eps=0.1):
         super().__init__(rng)
@@ -224,7 +249,7 @@ class NeuralLogisticAllocator(Allocator):
         self.d = context_dim
         self.K = num_items
         self.H = latent_dim
-        self.net = NeuralRegression2(self.d+self.feature_dim, self.H).to(self.device)
+        self.net = NeuralRegression(self.d+self.feature_dim, self.H).to(self.device)
 
         if mode=='UCB':
             self.model = LogisticRegressionS(self.H, self.mode, self.rng, self.lr, c=self.c).to(self.device)
@@ -253,16 +278,16 @@ class NeuralLogisticAllocator(Allocator):
                 self.optimizer.step()
             self.net.eval()
         
-        X = self.net.linear1(X)
-        F = self.net.linear2(X).numpy(force=True)
+        F = self.net.feature(X).numpy(force=True)
+        # F = self.net.linear2(X)
         F = np.concatenate([F, np.ones((F.shape[0],1))],axis=1)
         self.model.update(F, items, outcomes, name)
 
     def estimate_CTR(self, context, UCB=False, TS=False):
         X = np.concatenate([np.tile(context.reshape(1,-1),(self.K,1)), self.item_features], axis=1)
         X = torch.Tensor(X).to(self.device)
-        X = self.net.linear1(X)
-        F = self.net.linear2(X).numpy(force=True)
+        F = self.net.feature(X).numpy(force=True)
+        # F = self.net.linear2(X)
         F = np.concatenate([F, np.ones((F.shape[0],1))],axis=1)
         return self.model.estimate_CTR(F, UCB, TS)
 

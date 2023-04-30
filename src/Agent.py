@@ -24,7 +24,7 @@ class Agent:
             self.init_num_random_bidding = int(split[1])
             self.decay_factor = float(split[2])
 
-        self.use_optimistic_value = False
+        self.use_optimistic_value = True
 
         # Value distribution
         self.item_values = item_values
@@ -39,6 +39,8 @@ class Agent:
 
         self.update_interval = update_interval
         self.memory = memory
+
+        self.item_selection = np.zeros((self.num_items,)).astype(int)
     
     def should_explore(self):
         if isinstance(self.bidder, OracleBidder) or self.random_bidding_mode=='None':
@@ -62,7 +64,7 @@ class Agent:
         estim_values = estim_CTRs * self.item_values
         best_item = np.argmax(estim_values)
         if not isinstance(self.allocator, OracleAllocator) and self.allocator.mode=='Epsilon-greedy':
-            if self.rng.uniform(0,1)<self.allocator.eps:
+            if self.clock < 10000 or self.rng.uniform(0,1)<self.allocator.eps:
                 best_item = self.rng.choice(self.num_items, 1).item()
 
         return best_item, estim_CTRs[best_item]
@@ -128,6 +130,7 @@ class Agent:
                                                optimal_item=False,
                                                bidding_error=0.0))
 
+        self.item_selection[best_item] += 1
         return bid, best_item
 
     def charge(self, price, second_price, outcome):
@@ -218,3 +221,6 @@ class Agent:
 
     def get_matrix(self):
         return self.allocator.model.M.numpy(force=True)
+    
+    def get_item_selection(self):
+        return self.item_selection.copy()
