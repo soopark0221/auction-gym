@@ -8,7 +8,7 @@ from BidderAllocation import OracleAllocator
 from Bidder import OracleBidder
 from Models import sigmoid
 from Impression import ImpressionOpportunity
-
+import time
 class Auction:
     ''' Base class for auctions '''
     def __init__(self, rng, allocation, agents, bilinear_map, agent2items, agents2item_values, max_slots, context_dim, obs_context_dim, context_dist, num_participants_per_round):
@@ -36,6 +36,7 @@ class Auction:
 
         self.num_participants_per_round = num_participants_per_round
         self.oracle_update_features()
+        self.bid_time = []
     
     def oracle_update_features(self):
         for agent in self.agents:
@@ -66,6 +67,7 @@ class Auction:
         # Sample the number of slots uniformly between [1, max_slots]
         num_slots = self.rng.integers(1, self.max_slots + 1)
 
+        st = time.time()
         # Sample a true context vector
         true_context = self.generate_context()
 
@@ -104,6 +106,7 @@ class Auction:
             
             agent.logs[auction_no][-1].set_true_CTR(best_value, true_CTR[item])
             CTRs.append(true_CTR[item])
+            oracle_st = time.time()
             if not agent.name.startswith('Competitor') and not isinstance(agent.bidder, OracleBidder):
                 regret, u_optimal, b_optimal = self.compute_regret(participating_agents, true_context, bid, expected_value, item)
                 self.regret.append(regret)
@@ -111,6 +114,7 @@ class Auction:
                 self.optimal_bidding.append(b_optimal)
                 self.win_optimal.append(self.winrate_point(participating_agents, true_context, b_optimal))
                 self.optimal_utility.append(u_optimal)
+            oracle_end = time.time()
         bids = np.array(bids)
         CTRs = np.array(CTRs)
         # Now we have bids, we need to somehow allocate slots
@@ -130,9 +134,13 @@ class Auction:
                 else:
                     agent.set_price(auction_no, price)
             self.revenue += price
+        end = time.time()
+        self.bid_time.append(((end-st)-(oracle_end-oracle_st))*1000)
         for agent in participating_agents:
             agent.update()
 
+    def get_bid_time(self):
+        return max(self.bid_time), min(self.bid_time), sum(self.bid_time)/len(self.bid_time)
     def winrate_grid(self, agents, context, b_grid):
         p_grid = np.ones_like(b_grid)
         for agent in agents:
@@ -180,7 +188,6 @@ class Auction:
                 index = agent.record_index
                 break
         return np.sum(self.regret[index:])
-    
     def get_optimal_bidding(self):
         for agent in self.agents:
             if not agent.name.startswith('Competitor'):

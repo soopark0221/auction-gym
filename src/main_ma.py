@@ -156,7 +156,7 @@ def simulation_run(run, multi_auctions):
     for i in tqdm(np.arange(1, num_iter+1), desc=f'run {run}'):
         for j in range(len(multi_auctions)):
             multi_auctions[j].simulate_opportunity(auction_no=j)
-
+        
         if i%record_interval==0:
             regret_i = 0
             bidding_optimal_i = 0
@@ -202,7 +202,7 @@ def simulation_run(run, multi_auctions):
             auction_revenue.append(revenue_i) 
         # if i%int(num_iter/5)==0:
         #     plot_winrate(target_agent)
-
+        print(multi_auctions[0].get_bid_time())
 def plot_winrate(agent):
     global auction, obs_context_dim
     for i in range(2):
