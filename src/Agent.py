@@ -63,10 +63,6 @@ class Agent:
         # Compute value if clicked
         estim_values = estim_CTRs * self.item_values
         best_item = np.argmax(estim_values)
-        if not isinstance(self.allocator, OracleAllocator) and self.allocator.mode=='Epsilon-greedy':
-            if self.rng.uniform(0,1)<self.allocator.eps:
-                best_item = self.rng.choice(self.num_items, 1).item()
-
         return best_item, estim_CTRs[best_item]
 
     def bid(self, context, value=None, prob_win=None, b_grid=None):

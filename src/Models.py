@@ -472,17 +472,19 @@ class BayesianNeuralRegression(nn.Module):
         self.h = latent_dim
         self.prior_var = prior_var
         self.linear1 = BayesianLinear(self.d, self.h)
-        self.linear2 = BayesianLinear(self.h, 1)
+        self.linear2 = BayesianLinear(self.h, self.h)
+        self.out = BayesianLinear(self.h, 1)
         self.criterion = nn.BCELoss()
         self.eval()
 
     def forward(self, x, MAP=False):
         x = torch.relu(self.linear1(x, not MAP))
-        return torch.sigmoid(self.linear2(x, not MAP))
+        x = torch.relu(self.linear2(x, not MAP))
+        return torch.sigmoid(self.out(x, not MAP))
 
     def loss(self, predictions, labels, N):
-        kl_div = self.linear1.KL_div(self.prior_var) + self.linear2.KL_div(self.prior_var)
-        return self.criterion(predictions, labels) + kl_div/N
+        #kl_div = self.linear1.KL_div(self.prior_var) + self.linear2.KL_div(self.prior_var)
+        return self.criterion(predictions, labels) #+ kl_div/N
     
     def get_uncertainty(self):
         uncertainties = [self.linear1.get_uncertainty(),
@@ -522,13 +524,13 @@ class NeuralRegression2(nn.Module):
         self.h = latent_dim
         self.linear1 = nn.Linear(self.d, self.h)
         self.linear2 = nn.Linear(self.h, self.h)
+        self.dropout = nn.Dropout(0.8)
         self.head = nn.Linear(self.h, 1)
         self.BCE = nn.BCELoss()
         self.eval()
 
     def forward(self, x):
-        x = torch.sigmoid(self.linear1(x))
-        x = torch.sigmoid(self.linear2(x))
+        x = torch.relu(self.dropout(self.linear1(x)))
         return torch.sigmoid(self.head(x))
 
     def loss(self, predictions, labels):

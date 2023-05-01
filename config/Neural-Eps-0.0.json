@@ -1,42 +1,48 @@
 {
-    "agents": [ {
-      "name": "Competitor-Truthful",
-      "num_copies": 2,
-      "num_items": 10,
-        "allocator": {
-          "type": "OracleAllocator",
-          "kwargs": {}
-        },
-        "bidder": {
-            "type": "TruthfulBidder",
-            "kwargs": {}
-      }
-    },
-    {
-      "name": "Neural-eps(0.0)",
-      "num_copies": 1,
-      "num_items": 10,
-        "allocator": {
-          "type": "NeuralAllocator",
-          "kwargs": {
-            "lr": 1e-3,
-            "context_dim": 5,
-            "latent_dim": 32,
-            "num_items": 10,
-            "mode": "\"Epsilon-greedy\"",
-            "eps": 0.0
-          }
-        },
-        "bidder": {
-          "type": "DefaultBidder",
-          "kwargs": {
-            "lr": 1e-3,
-            "context_dim": 5,
-            "noise": 0.01
-          }
+  "agents": [ {
+    "name": "Competitor-Truthful",
+    "num_copies": 2,
+    "num_items": 3,
+      "allocator": {
+        "type": "OracleAllocator",
+        "kwargs": {}
       },
-      "memory": "inf"
-    }],
-    "output_dir": "results/Neural-eps/",
-    "network_architecture": "input-16-output"
-  }
+      "bidder": {
+          "type": "TruthfulBidder",
+          "kwargs": {}
+    }
+  },
+  {
+    "name": "Neural-eps(0.0)",
+    "num_copies": 1,
+    "num_items": 3,
+      "allocator": {
+        "type": "NeuralAllocator",
+        "kwargs": {
+          "lr": 1e-3,
+          "context_dim": 10,
+          "latent_dim": 16,
+          "num_items": 3,
+          "mode": "\"Epsilon-greedy\"",
+          "eps": 0.0,
+          "batch_size" : 128,
+          "weight_decay" : 0,
+          "num_layers" : 2,
+          "num_epochs" : 100,
+          "prior_var": 0.1
+
+        }
+      },
+      "bidder": {
+        "type": "DefaultBidder",
+        "kwargs": {
+          "lr": 1e-3,
+          "context_dim": 10,
+          "noise": 0.01
+        }
+    },
+    "memory": "inf"
+  }],
+  "output_dir": "results/Neural-eps/",
+  "network_architecture": "input-16-output"
+}

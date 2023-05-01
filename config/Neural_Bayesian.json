@@ -13,24 +13,23 @@
       }
     },
     {
-      "name": "Neural-eps(0.1)",
+      "name": "Neural-Bayesian",
       "num_copies": 1,
       "num_items": 3,
         "allocator": {
-          "type": "NeuralAllocator",
+          "type": "BayesianAllocator",
           "kwargs": {
             "lr": 1e-3,
             "context_dim": 10,
-            "latent_dim": 16,
+            "latent_dim": 32,
             "num_items": 3,
             "mode": "\"Epsilon-greedy\"",
-            "eps": 0.1,
             "batch_size" : 128,
             "weight_decay" : 0,
-            "num_layers" : 2,
+            "num_layers" : 3,
             "num_epochs" : 200,
-            "prior_var": 0.1
-
+            "prior_var": 0.1,
+            "eps":0.0
           }
         },
         "bidder": {
@@ -43,6 +42,6 @@
       },
       "memory": "inf"
     }],
-    "output_dir": "results/Neural-eps/",
+    "output_dir": "results/Neural/",
     "network_architecture": "input-16-output"
   }

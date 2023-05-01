@@ -67,7 +67,6 @@ class NeuralAllocator(Allocator):
 
         self.net.train()
         batch_size = min(N, self.batch_size)
-
         for epoch in range(int(self.num_epochs)):
             shuffled_ind = self.rng.choice(N, size=N, replace=False)
             epoch_loss = 0
@@ -101,6 +100,55 @@ class NeuralAllocator(Allocator):
             return self.net.get_uncertainty()
         else:
             return np.array([0])
+
+    
+class BayesianAllocator(Allocator):
+    def __init__(self, rng, item_features, lr, batch_size, weight_decay, num_layers, latent_dim, num_epochs, context_dim, num_items, mode,  eps=None, prior_var=None):
+        super().__init__(rng, item_features)
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.mode = mode
+        self.num_epochs = num_epochs
+        self.net = BayesianNeuralRegression(context_dim+self.item_features.shape[1], latent_dim, prior_var).to(self.device)
+        self.count = 0
+        self.lr = lr
+        self.batch_size = batch_size
+        self.weight_decay = weight_decay
+        self.optimizer = torch.optim.Adam(self.net.parameters(), lr=self.lr, weight_decay=1e-6, amsgrad=True)
+
+    def update(self, contexts, items, outcomes, name):
+        self.count += 1
+
+        X = np.concatenate([contexts, self.item_features[items]], axis=1)
+        X, y = torch.Tensor(X).to(self.device), torch.Tensor(outcomes).to(self.device)
+        N = X.shape[0]
+        if N<10:
+            return
+
+        self.net.train()
+        batch_size = min(N, self.batch_size)
+        for epoch in range(int(self.num_epochs)):
+            shuffled_ind = self.rng.choice(N, size=N, replace=False)
+            epoch_loss = 0
+            for i in range(int(N/batch_size)):
+                self.optimizer.zero_grad()
+                ind = shuffled_ind[i*batch_size:(i+1)*batch_size]
+                X_ = X[ind]
+                y_ = y[ind]
+                loss = self.net.loss(self.net(X_).squeeze(), y_, N)
+                loss.backward()
+                self.optimizer.step()
+                epoch_loss += loss.item()
+        self.net.eval()
+
+    def estimate_CTR(self, context):
+        X = torch.Tensor(np.concatenate([np.tile(context.reshape(1,-1),(self.K, 1)), self.item_features],axis=1)).to(self.device)
+        return self.net(X).numpy(force=True).reshape(-1)
+
+    
+    def get_uncertainty(self):
+        return self.net.get_uncertainty()
+
+
 
 class LinearAllocator(Allocator):
     def __init__(self, rng, context_dim, mode, c=0.0, eps=0.1):
