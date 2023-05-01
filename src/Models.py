@@ -508,6 +508,7 @@ class LogisticRegressionM_MB(nn.Module):
         loss_t = BCE_loss + torch.sum(m.T @ S0_inv @ m/2)  
         return loss_t
     '''
+
     def estimate_CTR(self, context, item_f, UCB=False, TS=False):
         # context @ M @ item_feature = M * outer(context, item_feature)
         X = []

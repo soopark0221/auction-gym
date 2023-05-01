@@ -8,7 +8,7 @@ from os import path
 
 data_path = '/home/soopark0221/auction-gym/results/mb/results_to_plot'
 output_dir = '/home/soopark0221/auction-gym/results/plots'
-experiment = 'TS'
+experiment = '300 agents'
 Bid = 'MB'
 subpath = '1'
 measure_to_plot = 'Net Utility'
@@ -170,6 +170,43 @@ def regret():
     plt.tight_layout()
     plt.savefig(f"{output_dir}/{experiment}_Total_Regret.png", bbox_inches='tight')
 
+def regret():
+    global experiment,data_path
+    subpath = 'regret'
+    data_path1 = path.join(data_path, subpath)
+    methods = ['Eps_0.0_m', 'Eps_0.1_m', 'TS_1.0_m', 'UCB_10.0_m']
+    #methods = ['SB_Eps_0.0', 'SB_Eps_0.1', 'SB_TS_1.0', 'SB_UCB_10.0']
+    #methods = [f'Logistic_Eps0.0_{Bid}', f'Logistic_Eps0.1_{Bid}', f'Logistic_TS0.1_{Bid}', f'Logistic_TS1.0_{Bid}', f'Logistic_UCB0.1_{Bid}',f'Logistic_UCB1.0_{Bid}']
+    #methods = ['Logistic_Eps0.0_20', 'Logistic_Eps0.1_20', 'Logistic_Eps0.0_50', 'Logistic_Eps0.1_50']
+    file_list = [path.join(data_path1, method+'.csv') for method in methods]
+
+    df_list = []
+
+    fig, axes = plt.subplots(figsize=FIGSIZE)
+
+    for setting, file in zip(methods, file_list):
+        df = pd.read_csv(file)
+        #df = df.reset_index()
+        df['methods'] = setting
+        df_list.append(df)
+
+    df = pd.concat(df_list)
+    df = df.reset_index()
+
+    sns.lineplot(data=df, x="Step", y="Regret", ax=axes, hue='methods')
+
+    plt.title(f'Regret Over Time: {experiment}', fontsize=FONTSIZE + 2)
+    plt.ylabel('Regret', fontsize=FONTSIZE)
+
+    plt.xlabel('x300 steps', fontsize=FONTSIZE)
+    plt.xticks(fontsize=FONTSIZE - 2)
+    plt.yticks(fontsize=FONTSIZE - 2)
+    plt.grid(True, 'major', 'y', ls='--', lw=.5, c='k', alpha=.3)
+    plt.legend(loc='lower right', fontsize=FONTSIZE-4)
+    plt.tight_layout()
+    plt.savefig(f"{output_dir}/{experiment}_Total_Regret.png", bbox_inches='tight')
+
+
 def regret_ex():
     global experiment,data_path
     subpath = 'regret'
@@ -195,8 +232,8 @@ def regret_ex():
 
     sns.lineplot(data=df, x="Step", y="Regret", ax=axes, hue='methods')
 
-    plt.title(f'Regret Over Time: {experiment}', fontsize=FONTSIZE + 2)
-    plt.ylabel('Regret', fontsize=FONTSIZE)
+    plt.title(f'Cumulative Regret Over Time: {experiment}', fontsize=FONTSIZE + 2)
+    plt.ylabel('Cumulative Regret', fontsize=FONTSIZE)
 
     plt.xlabel('x300 steps', fontsize=FONTSIZE)
     plt.xticks(fontsize=FONTSIZE - 2)
@@ -232,7 +269,7 @@ def optimal():
 
     sns.lineplot(data=df, x="Step", y="Optimal Selection Rate", ax=axes, hue='methods')
 
-    plt.title(f'Optimal Selection Rate Over Time: {experiment}', fontsize=FONTSIZE + 2)
+    plt.title(f'Selection Rate of Optimal Ads Over Time: {experiment}', fontsize=FONTSIZE + 2)
     plt.ylabel('Rate', fontsize=FONTSIZE)
 
     plt.xlabel('x300 steps', fontsize=FONTSIZE)
@@ -389,6 +426,51 @@ def multibid():
     plt.legend(loc='lower right', fontsize=FONTSIZE-4)
     plt.tight_layout()
     plt.savefig(f"{output_dir}/{experiment}_Regrets.png", bbox_inches='tight')
+
+
+def replace_df(data_name):
+    global experiment,data_path
+    subpath = data_name
+    data_path1 = path.join(data_path, subpath)
+    methods = ['Eps_0.0_2', 'Eps_0.1_2', 'TS_1.0_2', 'UCB_10.0_2']
+    #methods = [f'Logistic_Eps0.0_{Bid}', f'Logistic_Eps0.1_{Bid}', f'Logistic_TS0.1_{Bid}', f'Logistic_TS1.0_{Bid}', f'Logistic_UCB0.1_{Bid}',f'Logistic_UCB1.0_{Bid}']
+    #methods = ['Logistic_Eps0.0_20', 'Logistic_Eps0.1_20', 'Logistic_Eps0.0_50', 'Logistic_Eps0.1_50']
+    file_list = [path.join(data_path1, method+'.csv') for method in methods]
+
+    df_list = []
+
+    fig, axes = plt.subplots(figsize=FIGSIZE)
+
+    for setting, file in zip(methods, file_list):
+        df = pd.read_csv(file)
+        df['Run'] = df['Run'].replace([2], 5)
+        df['Run'] = df['Run'].replace([1], 4)
+        df['Run'] = df['Run'].replace([0], 3)
+        df.to_csv(f'{data_path1}/{setting}.csv')
+        #df = df.reset_index()
+
+def collect_df(data_name):
+    global experiment,data_path
+    subpath = 'data_name'
+    data_path1 = path.join(data_path, subpath)
+    methods = ['Eps_0.0', 'Eps_0.1', 'TS_1.0', 'UCB_10.0']
+    methods2 = ['Eps_0.0_2', 'Eps_0.1_2', 'TS_1.0_2', 'UCB_10.0_2']
+    methods3 = ['Eps_0.0_m', 'Eps_0.1_m', 'TS_1.0_m', 'UCB_10.0_m']
+
+    #methods = [f'Logistic_Eps0.0_{Bid}', f'Logistic_Eps0.1_{Bid}', f'Logistic_TS0.1_{Bid}', f'Logistic_TS1.0_{Bid}', f'Logistic_UCB0.1_{Bid}',f'Logistic_UCB1.0_{Bid}']
+    #methods = ['Logistic_Eps0.0_20', 'Logistic_Eps0.1_20', 'Logistic_Eps0.0_50', 'Logistic_Eps0.1_50']
+    file_list = [path.join(data_path1, method+'.csv') for method in methods]
+    file_list2 = [path.join(data_path1, method+'.csv') for method in methods2]
+
+    df_list = []
+
+    fig, axes = plt.subplots(figsize=FIGSIZE)
+
+    for setting, file1, file2 in zip(methods3, file_list, file_list2):
+        df1 = pd.read_csv(file1)
+        df2 = pd.read_csv(file2)
+        concate_data = pd.concat([df1,df2])
+        concate_data.to_csv(f'{data_path1}/{setting}.csv')
 
 
 if __name__=='__main__':

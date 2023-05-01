@@ -36,7 +36,7 @@ class Agent:
         self.memory = memory
     
     def should_explore(self):
-        if isinstance(self.bidder, OracleBidder):
+        if isinstance(self.bidder, OracleBidder) or self.random_bidding_mode == 'None':
             return False
         if (self.allocator.mode=='TS' or self.allocator.mode=='UCB') and self.use_optimistic_value:
             return self.clock%self.update_interval < \
