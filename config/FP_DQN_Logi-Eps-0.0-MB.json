@@ -38,6 +38,6 @@
       },
       "memory": "inf"
     }],
-    "output_dir": "results/Logistic-eps-f/MB/",
+    "output_dir": "results/Logistic-eps-l/MB/",
     "network_architecture": "input-16-output"
   }

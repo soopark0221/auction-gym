@@ -36,6 +36,6 @@
       },
       "memory": "inf"
     }],
-    "output_dir": "results/Logistic-TS-f/SB/",
+    "output_dir": "results/Logistic-TS-l/SB/",
     "network_architecture": "input-16-output"
   }

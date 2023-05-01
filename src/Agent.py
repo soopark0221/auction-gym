@@ -180,7 +180,7 @@ class Agent:
 
         # Update response model with data from winning bids
         won_mask = np.array([opp.won for lst in self.logs for opp in lst])
-        print(f'winning num {self.name} {won_mask.sum()} {len(won_mask)}')
+        #print(f'winning num {self.name} {won_mask.sum()} {len(won_mask)}')
         self.allocator.update(contexts[won_mask], items[won_mask], outcomes[won_mask], auction_nos[won_mask], self.name)
 
         # Update bidding model with all data

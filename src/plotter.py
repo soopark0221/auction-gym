@@ -8,8 +8,9 @@ from os import path
 
 data_path = '/home/soopark0221/auction-gym/results/mb/results_to_plot'
 output_dir = '/home/soopark0221/auction-gym/results/plots'
-experiment = '300 agents'
-Bid = 'MB'
+experiment = '1 agent' #'300 agents'
+agent = 'single'
+Bid = 'SB_'
 subpath = '1'
 measure_to_plot = 'Net Utility'
 FIGSIZE = (8, 5)
@@ -134,11 +135,11 @@ def winning_prob_per_method():
     plot_measure_overall(df, 'Probability of winning')
 
 
-def regret():
-    global experiment,data_path
+def avg_regret():
+    global experiment,data_path, agent
     subpath = 'regret'
     data_path1 = path.join(data_path, subpath)
-    methods = ['Eps_0.0', 'Eps_0.1', 'TS_1.0', 'UCB_10.0']
+    methods = [f'{Bid}Eps_0.0', f'{Bid}Eps_0.1', f'{Bid}TS_1.0', f'{Bid}UCB_10.0']
     #methods = ['SB_Eps_0.0', 'SB_Eps_0.1', 'SB_TS_1.0', 'SB_UCB_10.0']
     #methods = [f'Logistic_Eps0.0_{Bid}', f'Logistic_Eps0.1_{Bid}', f'Logistic_TS0.1_{Bid}', f'Logistic_TS1.0_{Bid}', f'Logistic_UCB0.1_{Bid}',f'Logistic_UCB1.0_{Bid}']
     #methods = ['Logistic_Eps0.0_20', 'Logistic_Eps0.1_20', 'Logistic_Eps0.0_50', 'Logistic_Eps0.1_50']
@@ -152,29 +153,38 @@ def regret():
         df = pd.read_csv(file)
         #df = df.reset_index()
         df['methods'] = setting
+        df['avg_regret'] = df['Regret']/(df['Step']+1)
+        print(df)
+        if agent == 'single':
+            df['Step'] = df['Step']*300
+        
         df_list.append(df)
 
     df = pd.concat(df_list)
     df = df.reset_index()
 
-    sns.lineplot(data=df, x="Step", y="Regret", ax=axes, hue='methods')
+    sns.lineplot(data=df, x="Step", y="avg_regret", ax=axes, hue='methods')
 
-    plt.title(f'Regret Over Time: {experiment}', fontsize=FONTSIZE + 2)
-    plt.ylabel('Regret', fontsize=FONTSIZE)
+    plt.title(f'Avg Regret Over Time: {experiment}', fontsize=FONTSIZE + 2)
+    plt.ylabel('Avg Regret', fontsize=FONTSIZE)
 
-    plt.xlabel('x300 steps', fontsize=FONTSIZE)
+    if agent == 'multi':
+        plt.xlabel('steps per agent', fontsize=FONTSIZE)
+    else:
+        plt.xlabel('steps', fontsize=FONTSIZE)
+    
     plt.xticks(fontsize=FONTSIZE - 2)
     plt.yticks(fontsize=FONTSIZE - 2)
     plt.grid(True, 'major', 'y', ls='--', lw=.5, c='k', alpha=.3)
     plt.legend(loc='lower right', fontsize=FONTSIZE-4)
     plt.tight_layout()
-    plt.savefig(f"{output_dir}/{experiment}_Total_Regret.png", bbox_inches='tight')
+    plt.savefig(f"{output_dir}/{experiment}_AVG_Regret.png", bbox_inches='tight')
 
-def regret():
-    global experiment,data_path
+def cum_regret():
+    global experiment,data_path, agent
     subpath = 'regret'
     data_path1 = path.join(data_path, subpath)
-    methods = ['Eps_0.0_m', 'Eps_0.1_m', 'TS_1.0_m', 'UCB_10.0_m']
+    methods = [f'{Bid}Eps_0.0', f'{Bid}Eps_0.1', f'{Bid}TS_1.0', f'{Bid}UCB_10.0']
     #methods = ['SB_Eps_0.0', 'SB_Eps_0.1', 'SB_TS_1.0', 'SB_UCB_10.0']
     #methods = [f'Logistic_Eps0.0_{Bid}', f'Logistic_Eps0.1_{Bid}', f'Logistic_TS0.1_{Bid}', f'Logistic_TS1.0_{Bid}', f'Logistic_UCB0.1_{Bid}',f'Logistic_UCB1.0_{Bid}']
     #methods = ['Logistic_Eps0.0_20', 'Logistic_Eps0.1_20', 'Logistic_Eps0.0_50', 'Logistic_Eps0.1_50']
@@ -186,8 +196,10 @@ def regret():
 
     for setting, file in zip(methods, file_list):
         df = pd.read_csv(file)
-        #df = df.reset_index()
+        df = df.reset_index()
         df['methods'] = setting
+        if agent == 'single':
+            df['Step'] = df['Step']*300
         df_list.append(df)
 
     df = pd.concat(df_list)
@@ -195,16 +207,20 @@ def regret():
 
     sns.lineplot(data=df, x="Step", y="Regret", ax=axes, hue='methods')
 
-    plt.title(f'Regret Over Time: {experiment}', fontsize=FONTSIZE + 2)
-    plt.ylabel('Regret', fontsize=FONTSIZE)
+    plt.title(f'Cumulative Regret Over Time: {experiment}', fontsize=FONTSIZE + 2)
+    plt.ylabel('Cumulative Regret', fontsize=FONTSIZE)
 
-    plt.xlabel('x300 steps', fontsize=FONTSIZE)
+    if agent == 'multi':
+        plt.xlabel('steps per agent', fontsize=FONTSIZE)
+    else:
+        plt.xlabel('steps', fontsize=FONTSIZE)
+
     plt.xticks(fontsize=FONTSIZE - 2)
     plt.yticks(fontsize=FONTSIZE - 2)
     plt.grid(True, 'major', 'y', ls='--', lw=.5, c='k', alpha=.3)
     plt.legend(loc='lower right', fontsize=FONTSIZE-4)
     plt.tight_layout()
-    plt.savefig(f"{output_dir}/{experiment}_Total_Regret.png", bbox_inches='tight')
+    plt.savefig(f"{output_dir}/{experiment}_Cum_Regret.png", bbox_inches='tight')
 
 
 def regret_ex():
@@ -225,6 +241,7 @@ def regret_ex():
         df = pd.read_csv(file)
         #df = df.reset_index()
         df['methods'] = setting
+
         df_list.append(df)
 
     df = pd.concat(df_list)
@@ -235,7 +252,7 @@ def regret_ex():
     plt.title(f'Cumulative Regret Over Time: {experiment}', fontsize=FONTSIZE + 2)
     plt.ylabel('Cumulative Regret', fontsize=FONTSIZE)
 
-    plt.xlabel('x300 steps', fontsize=FONTSIZE)
+    plt.xlabel('steps per agent', fontsize=FONTSIZE)
     plt.xticks(fontsize=FONTSIZE - 2)
     plt.yticks(fontsize=FONTSIZE - 2)
     plt.grid(True, 'major', 'y', ls='--', lw=.5, c='k', alpha=.3)
@@ -246,10 +263,10 @@ def regret_ex():
 
 
 def optimal():
-    global experiment,data_path
+    global experiment,data_path,agent
     subpath = 'optimalselection'
     data_path1 = path.join(data_path, subpath)
-    methods = ['Eps_0.0', 'Eps_0.1', 'TS_1.0', 'UCB_10.0']
+    methods = [f'{Bid}Eps_0.0', f'{Bid}Eps_0.1', f'{Bid}TS_1.0', f'{Bid}UCB_10.0']
     #methods = [f'Logistic_Eps0.0_{Bid}', f'Logistic_Eps0.1_{Bid}', f'Logistic_TS0.1_{Bid}', f'Logistic_TS1.0_{Bid}', f'Logistic_UCB0.1_{Bid}',f'Logistic_UCB1.0_{Bid}']
     #methods = ['Logistic_Eps0.0_20', 'Logistic_Eps0.1_20', 'Logistic_Eps0.0_50', 'Logistic_Eps0.1_50']
     file_list = [path.join(data_path1, method+'.csv') for method in methods]
@@ -262,6 +279,8 @@ def optimal():
         df = pd.read_csv(file)
         #df = df.reset_index()
         df['methods'] = setting
+        if agent == 'single':
+            df['Step'] = df['Step']*300
         df_list.append(df)
 
     df = pd.concat(df_list)
@@ -272,7 +291,11 @@ def optimal():
     plt.title(f'Selection Rate of Optimal Ads Over Time: {experiment}', fontsize=FONTSIZE + 2)
     plt.ylabel('Rate', fontsize=FONTSIZE)
 
-    plt.xlabel('x300 steps', fontsize=FONTSIZE)
+
+    if agent == 'multi':
+        plt.xlabel('steps per agent', fontsize=FONTSIZE)
+    else:
+        plt.xlabel('steps', fontsize=FONTSIZE)
     plt.xticks(fontsize=FONTSIZE - 2)
     plt.yticks(fontsize=FONTSIZE - 2)
     plt.grid(True, 'major', 'y', ls='--', lw=.5, c='k', alpha=.3)
@@ -283,10 +306,10 @@ def optimal():
 
 
 def probw():
-    global experiment,data_path
+    global experiment,data_path,agent
     subpath = 'probw'
     data_path1 = path.join(data_path, subpath)
-    methods = ['Eps_0.0', 'Eps_0.1', 'TS_1.0', 'UCB_10.0']
+    methods = [f'{Bid}Eps_0.0', f'{Bid}Eps_0.1', f'{Bid}TS_1.0', f'{Bid}UCB_10.0']
     #methods = [f'Logistic_Eps0.0_{Bid}', f'Logistic_Eps0.1_{Bid}', f'Logistic_TS0.1_{Bid}', f'Logistic_TS1.0_{Bid}', f'Logistic_UCB0.1_{Bid}',f'Logistic_UCB1.0_{Bid}']
     #methods = ['Logistic_Eps0.0_20', 'Logistic_Eps0.1_20', 'Logistic_Eps0.0_50', 'Logistic_Eps0.1_50']
     file_list = [path.join(data_path1, method+'.csv') for method in methods]
@@ -301,7 +324,8 @@ def probw():
         df['methods'] = setting
         df = df[~df['Agent'].str.startswith('Competitor')]
         df = df[~df['Agent'].str.startswith('Optimal')]
-
+        if agent == 'single':
+            df['Step'] = df['Step']*300
         df_list.append(df)
 
     df = pd.concat(df_list)
@@ -312,7 +336,11 @@ def probw():
     plt.title(f'Probability of Winning Over Time: {experiment}', fontsize=FONTSIZE + 2)
     plt.ylabel('Prob', fontsize=FONTSIZE)
 
-    plt.xlabel('x300 steps', fontsize=FONTSIZE)
+
+    if agent == 'multi':
+        plt.xlabel('steps per agent', fontsize=FONTSIZE)
+    else:
+        plt.xlabel('steps', fontsize=FONTSIZE)
     plt.xticks(fontsize=FONTSIZE - 2)
     plt.yticks(fontsize=FONTSIZE - 2)
     plt.grid(True, 'major', 'y', ls='--', lw=.5, c='k', alpha=.3)
@@ -349,8 +377,8 @@ def util():
 
     sns.lineplot(data=df, x="Step", y="Utility (Cumulative)", ax=axes, hue='methods')
 
-    plt.title(f'Utility Over Time: {experiment}', fontsize=FONTSIZE + 2)
-    plt.ylabel('Utility', fontsize=FONTSIZE)
+    plt.title(f'Cumulative Utility Over Time: {experiment}', fontsize=FONTSIZE + 2)
+    plt.ylabel('Cumulative Utility', fontsize=FONTSIZE)
 
     plt.xlabel('x300 steps', fontsize=FONTSIZE)
     plt.xticks(fontsize=FONTSIZE - 2)
@@ -432,7 +460,7 @@ def replace_df(data_name):
     global experiment,data_path
     subpath = data_name
     data_path1 = path.join(data_path, subpath)
-    methods = ['Eps_0.0_2', 'Eps_0.1_2', 'TS_1.0_2', 'UCB_10.0_2']
+    methods = ['SB_TS_1.0_2', 'SB_UCB_10.0_2']
     #methods = [f'Logistic_Eps0.0_{Bid}', f'Logistic_Eps0.1_{Bid}', f'Logistic_TS0.1_{Bid}', f'Logistic_TS1.0_{Bid}', f'Logistic_UCB0.1_{Bid}',f'Logistic_UCB1.0_{Bid}']
     #methods = ['Logistic_Eps0.0_20', 'Logistic_Eps0.1_20', 'Logistic_Eps0.0_50', 'Logistic_Eps0.1_50']
     file_list = [path.join(data_path1, method+'.csv') for method in methods]
@@ -449,13 +477,16 @@ def replace_df(data_name):
         df.to_csv(f'{data_path1}/{setting}.csv')
         #df = df.reset_index()
 
-def collect_df(data_name):
+def concat_df(data_name):
     global experiment,data_path
-    subpath = 'data_name'
+    subpath = data_name
     data_path1 = path.join(data_path, subpath)
-    methods = ['Eps_0.0', 'Eps_0.1', 'TS_1.0', 'UCB_10.0']
-    methods2 = ['Eps_0.0_2', 'Eps_0.1_2', 'TS_1.0_2', 'UCB_10.0_2']
-    methods3 = ['Eps_0.0_m', 'Eps_0.1_m', 'TS_1.0_m', 'UCB_10.0_m']
+    methods = ['SB_TS_1.0', 'SB_UCB_10.0']
+    methods2 = ['SB_TS_1.0_2', 'SB_UCB_10.0_2']
+    methods3 = ['SB_TS_1.0_m', 'SB_UCB_10.0_m']
+    #methods = ['Eps_0.0', 'Eps_0.1', 'TS_1.0', 'UCB_10.0']
+    #methods2 = ['Eps_0.0_2', 'Eps_0.1_2', 'TS_1.0_2', 'UCB_10.0_2']
+    #methods3 = ['Eps_0.0_m', 'Eps_0.1_m', 'TS_1.0_m', 'UCB_10.0_m']
 
     #methods = [f'Logistic_Eps0.0_{Bid}', f'Logistic_Eps0.1_{Bid}', f'Logistic_TS0.1_{Bid}', f'Logistic_TS1.0_{Bid}', f'Logistic_UCB0.1_{Bid}',f'Logistic_UCB1.0_{Bid}']
     #methods = ['Logistic_Eps0.0_20', 'Logistic_Eps0.1_20', 'Logistic_Eps0.0_50', 'Logistic_Eps0.1_50']
@@ -474,12 +505,15 @@ def collect_df(data_name):
 
 
 if __name__=='__main__':
-    #utility_per_method()
-    #regret_per_method()
-    #winning_prob_per_method()
-    #regret()
+
+    avg_regret()
+    #cum_regret()
     #optimal()
     #probw()
     #util()
-    #multibid()
-    regret_ex()
+    
+
+    #replace_df('regret')
+    #concat_df('regret')
+    #replace_df('utility')
+    #concat_df('utility')

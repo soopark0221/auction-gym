@@ -36,6 +36,6 @@
       },
       "memory": "inf"
     }],
-    "output_dir": "results/Logistic-UCB-f/MB/",
+    "output_dir": "results/Logistic-UCB-l/MB/",
     "network_architecture": "input-16-output"
   }
