@@ -8,9 +8,9 @@ from os import path
 
 data_path = '/home/soopark0221/auction-gym/results/mb/results_to_plot'
 output_dir = '/home/soopark0221/auction-gym/results/plots'
-experiment = '1 agent' #'300 agents'
-agent = 'single'
-Bid = 'SB_'
+experiment = '300 agents'
+agent = 'multi'
+Bid = ''
 subpath = '1'
 measure_to_plot = 'Net Utility'
 FIGSIZE = (8, 5)
@@ -139,7 +139,7 @@ def avg_regret():
     global experiment,data_path, agent
     subpath = 'regret'
     data_path1 = path.join(data_path, subpath)
-    methods = [f'{Bid}Eps_0.0', f'{Bid}Eps_0.1', f'{Bid}TS_1.0', f'{Bid}UCB_10.0']
+    methods = [f'{Bid}Eps_0.0_m', f'{Bid}Eps_0.1_m', f'{Bid}TS_1.0_m', f'{Bid}UCB_10.0_m']
     #methods = ['SB_Eps_0.0', 'SB_Eps_0.1', 'SB_TS_1.0', 'SB_UCB_10.0']
     #methods = [f'Logistic_Eps0.0_{Bid}', f'Logistic_Eps0.1_{Bid}', f'Logistic_TS0.1_{Bid}', f'Logistic_TS1.0_{Bid}', f'Logistic_UCB0.1_{Bid}',f'Logistic_UCB1.0_{Bid}']
     #methods = ['Logistic_Eps0.0_20', 'Logistic_Eps0.1_20', 'Logistic_Eps0.0_50', 'Logistic_Eps0.1_50']
@@ -154,7 +154,6 @@ def avg_regret():
         #df = df.reset_index()
         df['methods'] = setting
         df['avg_regret'] = df['Regret']/(df['Step']+1)
-        print(df)
         if agent == 'single':
             df['Step'] = df['Step']*300
         
@@ -184,7 +183,7 @@ def cum_regret():
     global experiment,data_path, agent
     subpath = 'regret'
     data_path1 = path.join(data_path, subpath)
-    methods = [f'{Bid}Eps_0.0', f'{Bid}Eps_0.1', f'{Bid}TS_1.0', f'{Bid}UCB_10.0']
+    methods = [f'{Bid}Eps_0.0_m', f'{Bid}Eps_0.1_m', f'{Bid}TS_1.0_m', f'{Bid}UCB_10.0_m']
     #methods = ['SB_Eps_0.0', 'SB_Eps_0.1', 'SB_TS_1.0', 'SB_UCB_10.0']
     #methods = [f'Logistic_Eps0.0_{Bid}', f'Logistic_Eps0.1_{Bid}', f'Logistic_TS0.1_{Bid}', f'Logistic_TS1.0_{Bid}', f'Logistic_UCB0.1_{Bid}',f'Logistic_UCB1.0_{Bid}']
     #methods = ['Logistic_Eps0.0_20', 'Logistic_Eps0.1_20', 'Logistic_Eps0.0_50', 'Logistic_Eps0.1_50']
@@ -266,7 +265,7 @@ def optimal():
     global experiment,data_path,agent
     subpath = 'optimalselection'
     data_path1 = path.join(data_path, subpath)
-    methods = [f'{Bid}Eps_0.0', f'{Bid}Eps_0.1', f'{Bid}TS_1.0', f'{Bid}UCB_10.0']
+    methods = [f'{Bid}Eps_0.0_m', f'{Bid}Eps_0.1_m', f'{Bid}TS_1.0_m', f'{Bid}UCB_10.0_m']
     #methods = [f'Logistic_Eps0.0_{Bid}', f'Logistic_Eps0.1_{Bid}', f'Logistic_TS0.1_{Bid}', f'Logistic_TS1.0_{Bid}', f'Logistic_UCB0.1_{Bid}',f'Logistic_UCB1.0_{Bid}']
     #methods = ['Logistic_Eps0.0_20', 'Logistic_Eps0.1_20', 'Logistic_Eps0.0_50', 'Logistic_Eps0.1_50']
     file_list = [path.join(data_path1, method+'.csv') for method in methods]
@@ -309,7 +308,7 @@ def probw():
     global experiment,data_path,agent
     subpath = 'probw'
     data_path1 = path.join(data_path, subpath)
-    methods = [f'{Bid}Eps_0.0', f'{Bid}Eps_0.1', f'{Bid}TS_1.0', f'{Bid}UCB_10.0']
+    methods = [f'{Bid}Eps_0.0_m', f'{Bid}Eps_0.1_m', f'{Bid}TS_1.0_m', f'{Bid}UCB_10.0_m']
     #methods = [f'Logistic_Eps0.0_{Bid}', f'Logistic_Eps0.1_{Bid}', f'Logistic_TS0.1_{Bid}', f'Logistic_TS1.0_{Bid}', f'Logistic_UCB0.1_{Bid}',f'Logistic_UCB1.0_{Bid}']
     #methods = ['Logistic_Eps0.0_20', 'Logistic_Eps0.1_20', 'Logistic_Eps0.0_50', 'Logistic_Eps0.1_50']
     file_list = [path.join(data_path1, method+'.csv') for method in methods]
@@ -354,7 +353,7 @@ def util():
     global experiment,data_path
     subpath = 'utility'
     data_path1 = path.join(data_path, subpath)
-    methods = ['Eps_0.0', 'Eps_0.1', 'TS_1.0', 'UCB_10.0']
+    methods = [f'{Bid}Eps_0.0_m', f'{Bid}Eps_0.1_m', f'{Bid}TS_1.0_m', f'{Bid}UCB_10.0_m']
     #methods = [f'Logistic_Eps0.0_{Bid}', f'Logistic_Eps0.1_{Bid}', f'Logistic_TS0.1_{Bid}', f'Logistic_TS1.0_{Bid}', f'Logistic_UCB0.1_{Bid}',f'Logistic_UCB1.0_{Bid}']
     #methods = ['Logistic_Eps0.0_20', 'Logistic_Eps0.1_20', 'Logistic_Eps0.0_50', 'Logistic_Eps0.1_50']
     file_list = [path.join(data_path1, method+'.csv') for method in methods]
@@ -370,6 +369,8 @@ def util():
         df = df[~df['Agent'].str.startswith('Optimal')]
 
         df['methods'] = setting
+        if agent == 'single':
+            df['Step'] = df['Step']*300
         df_list.append(df)
 
     df = pd.concat(df_list)
@@ -380,8 +381,12 @@ def util():
     plt.title(f'Cumulative Utility Over Time: {experiment}', fontsize=FONTSIZE + 2)
     plt.ylabel('Cumulative Utility', fontsize=FONTSIZE)
 
-    plt.xlabel('x300 steps', fontsize=FONTSIZE)
-    plt.xticks(fontsize=FONTSIZE - 2)
+
+    if agent == 'multi':
+        plt.xlabel('steps per agent', fontsize=FONTSIZE)
+    else:
+        plt.xlabel('steps', fontsize=FONTSIZE)
+        plt.xticks(fontsize=FONTSIZE - 2)
     plt.yticks(fontsize=FONTSIZE - 2)
     plt.grid(True, 'major', 'y', ls='--', lw=.5, c='k', alpha=.3)
     plt.legend(loc='lower right', fontsize=FONTSIZE-4)
@@ -460,7 +465,7 @@ def replace_df(data_name):
     global experiment,data_path
     subpath = data_name
     data_path1 = path.join(data_path, subpath)
-    methods = ['SB_TS_1.0_2', 'SB_UCB_10.0_2']
+    methods = [f'{Bid}Eps_0.0_2', f'{Bid}Eps_0.1_2', f'{Bid}TS_1.0_2', f'{Bid}UCB_10.0_2']
     #methods = [f'Logistic_Eps0.0_{Bid}', f'Logistic_Eps0.1_{Bid}', f'Logistic_TS0.1_{Bid}', f'Logistic_TS1.0_{Bid}', f'Logistic_UCB0.1_{Bid}',f'Logistic_UCB1.0_{Bid}']
     #methods = ['Logistic_Eps0.0_20', 'Logistic_Eps0.1_20', 'Logistic_Eps0.0_50', 'Logistic_Eps0.1_50']
     file_list = [path.join(data_path1, method+'.csv') for method in methods]
@@ -481,9 +486,9 @@ def concat_df(data_name):
     global experiment,data_path
     subpath = data_name
     data_path1 = path.join(data_path, subpath)
-    methods = ['SB_TS_1.0', 'SB_UCB_10.0']
-    methods2 = ['SB_TS_1.0_2', 'SB_UCB_10.0_2']
-    methods3 = ['SB_TS_1.0_m', 'SB_UCB_10.0_m']
+    methods = [f'{Bid}Eps_0.0', f'{Bid}Eps_0.1', f'{Bid}TS_1.0', f'{Bid}UCB_10.0']
+    methods2 = [f'{Bid}Eps_0.0_2', f'{Bid}Eps_0.1_2', f'{Bid}TS_1.0_2', f'{Bid}UCB_10.0_2']
+    methods3 = [f'{Bid}Eps_0.0_m', f'{Bid}Eps_0.1_m', f'{Bid}TS_1.0_m', f'{Bid}UCB_10.0_m']
     #methods = ['Eps_0.0', 'Eps_0.1', 'TS_1.0', 'UCB_10.0']
     #methods2 = ['Eps_0.0_2', 'Eps_0.1_2', 'TS_1.0_2', 'UCB_10.0_2']
     #methods3 = ['Eps_0.0_m', 'Eps_0.1_m', 'TS_1.0_m', 'UCB_10.0_m']
@@ -506,14 +511,18 @@ def concat_df(data_name):
 
 if __name__=='__main__':
 
-    avg_regret()
-    #cum_regret()
-    #optimal()
-    #probw()
-    #util()
-    
+   # avg_regret()
+   # cum_regret()
+   # optimal()
+   # probw()
+   # util()
+    regret_ex()
 
     #replace_df('regret')
     #concat_df('regret')
     #replace_df('utility')
     #concat_df('utility')
+    #replace_df('probw')
+    #concat_df('probw')
+    #replace_df('optimalselection')
+    #concat_df('optimalselection')
