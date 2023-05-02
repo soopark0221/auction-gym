@@ -13,4 +13,4 @@ python src/main.py config/FP_DQN_Logi-UCB.json
 ```
 
 A `results`-directory will be created, with a subdirectory per configuration file that was ran. This subdirectory will contain .csv-files with raw metrics, and .pdf-files with general visualisations.
-Other configuration files will generate results for greedy, dithering, and Thompson sampliong method.
+Other configuration files will generate results for greedy, dithering, and Thompson sampling method.
