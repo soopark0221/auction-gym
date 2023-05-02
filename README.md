@@ -2,9 +2,14 @@
 
 This is the source code for Multi-agent Auction Bidding. It is based on AuctionGym simulation environment [paper](https://www.amazon.science/publications/learning-to-bid-with-auctiongym) that enables reproducible offline evaluation of bandit and reinforcement learning approaches to ad allocation and bidding in online advertising auctions.
 
-## Getting Started 
-This section provides instructions to reproduce the results.
+## Requirements
+PyTorch, version: 1.13.1
 
+```
+pip install -r requirements.txt
+```
+
+## How to Run
 We provide a script that takes as input a configuration file detailing the environment and bidders (in JSON format), and outputs raw logged metrics over repeated auction rounds in .csv-files, along with visualisations.
 To reproduce the results for UCB, run:
 
