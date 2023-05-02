@@ -1,6 +1,6 @@
 ## Efficient Multi-Agent Auction Bidding in Online Ad-Auction  
 
-This is the source code for Multi-agent Auction Bidding. It is based on AuctionGym simulation environment. [paper](https://www.amazon.science/publications/learning-to-bid-with-auctiongym)
+This is the source code for Multi-agent Auction Bidding. It is based on AuctionGym simulation environment. [paper link](https://www.amazon.science/publications/learning-to-bid-with-auctiongym)
 
 ## Requirements
 PyTorch, version: 1.13.1
