@@ -1,6 +1,6 @@
 ## Efficient Multi-Agent Auction Bidding in Online Ad-Auction  
 
-This repository contains the source code for Multi-agent Auction Bidding. It is based on AuctionGym simulation environment [paper](https://www.amazon.science/publications/learning-to-bid-with-auctiongym) that enables reproducible offline evaluation of bandit and reinforcement learning approaches to ad allocation and bidding in online advertising auctions.
+This is the source code for Multi-agent Auction Bidding. It is based on AuctionGym simulation environment [paper](https://www.amazon.science/publications/learning-to-bid-with-auctiongym) that enables reproducible offline evaluation of bandit and reinforcement learning approaches to ad allocation and bidding in online advertising auctions.
 
 ## Getting Started 
 This section provides instructions to reproduce the results.
