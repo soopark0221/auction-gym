@@ -55,24 +55,35 @@ class Agent:
     def select_item(self, context):
         # Estimate CTR for all items
         if not isinstance(self.allocator, OracleAllocator) and self.allocator.mode=='UCB':
-            estim_CTRs = self.allocator.estimate_CTR(context, UCB=True)
+            estim_CTRs, uncertainty = self.allocator.estimate_CTR(context, UCB=True)
+            best_item = np.argmax(self.item_values * (estim_CTRs + self.allocator.c * uncertainty))
         elif not isinstance(self.allocator, OracleAllocator) and self.allocator.mode=='TS':
             estim_CTRs = self.allocator.estimate_CTR(context, TS=True)
+            TS_CTR = []
+            for i in range(5):
+                TS_CTR.append(self.allocator.estimate_CTR(context, TS=True).reshape(-1))
+            TS_CTR = np.stack(TS_CTR)
+            best_item = np.argmax(estim_CTRs * self.item_values)
+            estim_CTRs = self.allocator.estimate_CTR(context)
+            uncertainty = np.std(TS_CTR, axis=0)
         else:
             estim_CTRs = self.allocator.estimate_CTR(context)
-        # Compute value if clicked
-        estim_values = estim_CTRs * self.item_values
-        best_item = np.argmax(estim_values)
+            uncertainty = 0.0
+            best_item = np.argmax(self.item_values * estim_CTRs)
+
         if not isinstance(self.allocator, OracleAllocator) and self.allocator.mode=='Epsilon-greedy':
             if self.rng.uniform(0,1)<self.allocator.eps:
                 best_item = self.rng.choice(self.num_items, 1).item()
 
-        return best_item, estim_CTRs[best_item]
+        if not isinstance(self.allocator, OracleAllocator) and (self.allocator.mode=='UCB' or self.allocator.mode=='TS'):
+            return best_item, estim_CTRs[best_item], uncertainty[best_item]
+        else:
+            return best_item, estim_CTRs[best_item], uncertainty
 
     def bid(self, context, value=None, prob_win=None, b_grid=None):
         self.clock += 1
         # First, pick what item we want to choose
-        best_item, estimated_CTR = self.select_item(context)
+        best_item, estimated_CTR, uncertainty = self.select_item(context)
         optimistic_CTR = estimated_CTR
 
         # Sample value for this item
@@ -82,6 +93,8 @@ class Agent:
             context =context[:self.context_dim]
 
         if isinstance(self.bidder, OracleBidder):
+            # todo: modify oraclebidder
+            raise NotImplementedError
             bid = self.bidder.bid(value, estimated_CTR, prob_win, b_grid)
         elif not isinstance(self.allocator, OracleAllocator) and self.should_explore():
             if self.random_bidding_mode=='uniform':
@@ -95,20 +108,8 @@ class Agent:
             if not isinstance(self.bidder, TruthfulBidder):
                 self.bidder.b.append(bid)
         else:
-            if not isinstance(self.allocator, OracleAllocator) and self.allocator.mode=='UCB':
-                mean_CTR = self.allocator.estimate_CTR(context, UCB=False)
-                estimated_CTR = mean_CTR[best_item]
-                if self.use_optimistic_value:
-                    bid = self.bidder.bid(value, context, optimistic_CTR)
-                else:
-                    bid = self.bidder.bid(value, context, estimated_CTR)
-            elif not isinstance(self.allocator, OracleAllocator) and self.allocator.mode=='TS':
-                mean_CTR = self.allocator.estimate_CTR(context, TS=False)
-                estimated_CTR = mean_CTR[best_item]
-                if self.use_optimistic_value:
-                    bid = self.bidder.bid(value, context, optimistic_CTR)
-                else:
-                    bid = self.bidder.bid(value, context, estimated_CTR)
+            if not isinstance(self.allocator, OracleAllocator):
+                bid, optimistic_CTR = self.bidder.bid(value, context, estimated_CTR, uncertainty)
             else:
                 bid = self.bidder.bid(value, context, estimated_CTR)
 
@@ -220,7 +221,7 @@ class Agent:
         return np.array(list(opp.bidding_error for opp in self.logs[self.record_index:]))
 
     def get_matrix(self):
-        return self.allocator.model.M.numpy(force=True)
+        return self.allocator.model.M.numpy(force=True) * np.sqrt(self.feature_dim * self.context_dim)
     
     def get_item_selection(self):
         return self.item_selection.copy()

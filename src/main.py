@@ -91,6 +91,8 @@ def instantiate_agents(rng, agent_configs, agents2item_values, agents2item_featu
     for agent in agents:
         if isinstance(agent.allocator, OracleAllocator):
             agent.allocator.set_CTR_model(bilinear_map)
+        if isinstance(agent.allocator, NeuralAllocator):
+            agent.allocator.initialize(agents2item_values[agent.name])
         try:
             agent.bidder.initialize(agents2item_values[agent.name])
         except:
@@ -577,7 +579,7 @@ if __name__ == '__main__':
 
     fig, axes = plt.subplots(figsize=FIGSIZE)
     plt.title(f'Number of Selection Over Time', fontsize=FONTSIZE + 2)
-    sns.lineplot(data=df, x="Step", y="Selection", hue=['Run', 'Item'], ax=axes)
+    sns.lineplot(data=df, x="Step", y="Selection", hue="Item", style="Run", ax=axes)
     min_measure = min(0.0, np.min(df['Selection']))
     max_measure = max(0.0, np.max(df['Selection']))
     plt.xticks(fontsize=FONTSIZE - 2)

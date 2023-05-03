@@ -1,6 +1,8 @@
+from typing import Union
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from torch import device
 import torch.nn as nn
 from numba import jit
 from torch.nn import functional as F
@@ -328,7 +330,7 @@ class LogisticRegressionM(nn.Module):
         A = torch.LongTensor(items).to(self.device)
         y = torch.Tensor(outcomes).to(self.device)
 
-        epochs = 100
+        epochs = 1000
         optimizer = torch.optim.Adam(self.parameters(), lr=self.lr, amsgrad=True)
 
         for epoch in range(int(epochs)):
@@ -366,8 +368,9 @@ class LogisticRegressionM(nn.Module):
             if UCB:
                 m = self.flatten(self.M)
                 bound = self.c * torch.sum((X @ self.S) * X, dim=1, keepdim=True)
-                U = torch.sigmoid(X @ m + bound)
-                return U.numpy(force=True).reshape(-1)
+                mean = torch.sigmoid(X @ m).numpy(force=True).reshape(-1)
+                U = torch.sigmoid(X @ m + bound).numpy(force=True).reshape(-1)
+                return mean, U-mean
             elif TS:
                 m = self.flatten(self.M)
                 m = m + self.nu * self.sqrt_S @ torch.Tensor(self.rng.normal(0,1,self.d*self.h).reshape(-1,1)).to(self.device)
@@ -477,7 +480,7 @@ class BayesianNeuralRegression(nn.Module):
         self.eval()
 
     def forward(self, x, MAP=False):
-        x = torch.relu(self.linear1(x, not MAP))
+        x = torch.sigmoid(self.linear1(x, not MAP))
         return torch.sigmoid(self.linear2(x, not MAP))
 
     def loss(self, predictions, labels, N):
@@ -487,6 +490,34 @@ class BayesianNeuralRegression(nn.Module):
     def get_uncertainty(self):
         uncertainties = [self.linear1.get_uncertainty(),
                          self.linear2.get_uncertainty()]
+        return np.concatenate(uncertainties)
+
+class BayesianNeuralRegression2(nn.Module):
+    def __init__(self, input_dim, latent_dim, prior_var):
+        super().__init__()
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.d = input_dim
+        self.h = latent_dim
+        self.prior_var = prior_var
+        self.linear1 = BayesianLinear(self.d, self.h)
+        self.linear2 = BayesianLinear(self.h, self.h)
+        self.head = BayesianLinear(self.h, 1)
+        self.criterion = nn.BCELoss()
+        self.eval()
+
+    def forward(self, x, MAP=False):
+        x = torch.sigmoid(self.linear1(x, not MAP))
+        x = torch.sigmoid(self.linear2(x, not MAP))
+        return torch.sigmoid(self.head(x, not MAP))
+
+    def loss(self, predictions, labels, N):
+        kl_div = self.linear1.KL_div(self.prior_var) + self.linear2.KL_div(self.prior_var) + self.head.KL_div(self.prior_var)
+        return self.criterion(predictions, labels) + kl_div/N
+    
+    def get_uncertainty(self):
+        uncertainties = [self.linear1.get_uncertainty(),
+                         self.linear2.get_uncertainty(),
+                         self.head.get_uncertainty()]
         return np.concatenate(uncertainties)
 
 class NeuralRegression(nn.Module):
@@ -534,6 +565,36 @@ class NeuralRegression2(nn.Module):
     def loss(self, predictions, labels):
         return self.BCE(predictions, labels)
 
+class MultiheadNeuralRegression(nn.Module):
+    def __init__(self, input_dim, latent_dim, num_heads):
+        super().__init__()
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.d = input_dim
+        self.h = latent_dim
+        self.num_heads = num_heads
+        self.linear = nn.Linear(self.d, self.h)
+        self.heads = [nn.Linear(self.h, 1).to(self.device) for _ in range(num_heads)]
+        self.BCE = nn.BCELoss()
+        self.eval()
+    
+    def forward(self, x, i):
+        x = torch.sigmoid(self.linear(x))
+        return torch.sigmoid(self.heads[i](x))
+
+    def UCB_inference(self, x):
+        x = torch.sigmoid(self.linear(x))
+        y = [torch.sigmoid(self.heads[i](x)).numpy(force=True).reshape(-1) for i in range(self.num_heads)]
+        y = np.stack(y)
+        return np.mean(y, axis=0), np.std(y, axis=0)
+
+    def TS_inference(self,x):
+        x = torch.sigmoid(self.linear(x))
+        y = [torch.sigmoid(self.heads[i](x)).numpy(force=True).reshape(-1) for i in range(self.num_heads)]
+        return np.stack(y)
+
+    def loss(self, x, y, i):
+        return self.BCE(self(x,i).squeeze(), y)
+        
 
 class LogisticWinRateEstimator(nn.Module):
     def __init__(self, context_dim):
@@ -569,22 +630,22 @@ class NeuralWinRateEstimator(nn.Module):
         if self.skip_connection:
             context = x[:,:-1]
             gamma = x[:,-1].reshape(-1,1)
-            hidden = torch.relu(self.linear1(context))
+            hidden = torch.sigmoid(self.linear1(context))
             hidden_ = torch.concat([hidden, gamma], dim=-1)
             return torch.sigmoid(self.linear2(hidden_))
         else:
-            hidden = torch.relu(self.linear1(x))
+            hidden = torch.sigmoid(self.linear1(x))
             return torch.sigmoid(self.linear2(hidden))
     
     def loss(self, x, y):
         if self.skip_connection:
             context = x[:,:-1]
             gamma = x[:,-1].reshape(-1,1)
-            hidden = torch.relu(self.linear1(context))
+            hidden = torch.sigmoid(self.linear1(context))
             hidden_ = torch.concat([hidden, gamma], dim=-1)
             logit = self.linear2(hidden_)
         else:
-            hidden = torch.relu(self.linear1(x))
+            hidden = torch.sigmoid(self.linear1(x))
             logit = self.linear2(hidden)
         return self.BCE(logit, y)
     

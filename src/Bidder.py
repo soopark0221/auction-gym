@@ -627,7 +627,7 @@ class OracleBidder(Bidder):
             self.b = self.b[-memory:]
 
 class DefaultBidder(Bidder):
-    def __init__(self, rng, lr, context_dim, noise=0.0):
+    def __init__(self, rng, lr, context_dim, optimism_scale, noise=0.0):
         super().__init__(rng)
         self.lr = lr
         self.context_dim = context_dim
@@ -636,6 +636,11 @@ class DefaultBidder(Bidder):
 
         self.winrate_model = NeuralWinRateEstimator(context_dim).to(self.device)
         self.noise = noise
+        self.optimizer = torch.optim.Adam(self.winrate_model.parameters(), lr=self.lr, amsgrad=True)
+
+        self.G_w = np.eye(self.context_dim)
+        self.G_l = np.eye(self.context_dim)
+        self.optimism_scale = optimism_scale
     
     def initialize(self, item_values):
         self.item_values = item_values
@@ -665,9 +670,7 @@ class DefaultBidder(Bidder):
             optimizer.step()
         self.winrate_model.eval()
 
-    def bid(self, value, context, estimated_CTR):
-        # Compute the bid as expected value
-        expected_value = value * estimated_CTR
+    def bid(self, value, context, mean_CTR, uncertainty):
         # Grid search over gamma
         n_values_search = int(value*100)
         b_grid = np.linspace(0.1*value, 1.5*value,n_values_search)
@@ -675,34 +678,52 @@ class DefaultBidder(Bidder):
 
         prob_win = self.winrate_model(x).numpy(force=True).ravel()
 
-        estimated_utility = prob_win * (expected_value - b_grid)
+        won_count = context @ self.G_w @ context
+        lost_count = context @ self.G_l @ context
+        total_count = (won_count + lost_count) / np.sum(context**2)
+
+        if self.rng.uniform(0,1) < 0.9:
+            optimism = self.optimism_scale * np.log((5*lost_count+1e-6)/(won_count+1e-6))**3 * np.exp(-1e-4 * total_count)
+        else:
+            optimism = self.optimism_scale * np.log((lost_count+1e-6)/(won_count+1e-6))**3 * np.exp(-1e-4 * total_count)
+
+        # if self.rng.uniform(0,1) < (5*lost_count+1e-6)/(won_count+1e-6):
+        #     optimism = self.optimism_scale * np.exp(-1e-4 * total_count)
+        # else:
+        #     optimism = -self.optimism_scale * np.exp(-1e-4 * total_count)
+
+        optimistic_value = value * (mean_CTR + optimism * uncertainty)
+        estimated_utility = prob_win * (optimistic_value - b_grid)
         bid = b_grid[np.argmax(estimated_utility)]
         
         bid = np.clip(bid+self.rng.normal(0,self.noise)*value, 0.1*value, 1.5*value)
 
         self.b.append(bid)
-        return bid
+        return bid, optimistic_value/value
 
     def update(self, contexts, values, bids, prices, outcomes, estimated_CTRs, won_mask, utilities, name):
         if not won_mask.astype(np.uint8).sum():
             print(f'Not enough data collected for {name}')
             return
+        N = len(bids)
+        won_context = contexts[won_mask]
+        lost_context = contexts[~won_mask]
+        self.G_w =  won_context.T @ won_context
+        self.G_l = lost_context.T @ lost_context
 
         X = np.hstack((contexts.reshape(-1,self.context_dim), bids.reshape(-1, 1)))
-        N = X.shape[0]
         X = torch.Tensor(X).to(self.device)
 
         y = won_mask.astype(np.float32).reshape(-1,1)
         y = torch.Tensor(y).to(self.device)
 
         self.winrate_model.train()
-        epochs = 100
-        optimizer = torch.optim.Adam(self.winrate_model.parameters(), lr=self.lr, weight_decay=1e-6, amsgrad=True)
+        epochs = 500
         for epoch in range(int(epochs)):
-            optimizer.zero_grad()
+            self.optimizer.zero_grad()
             loss = self.winrate_model.loss(X, y)
             loss.backward()
-            optimizer.step()
+            self.optimizer.step()
         self.winrate_model.eval()
 
     def clear_logs(self, memory):
@@ -719,7 +740,7 @@ class IPSBidder(Bidder):
         self.lr = lr
 
         self.bidding_policy = StochasticPolicy(context_dim, 'REINFORCE', use_WIS=use_WIS, entropy_factor=entropy_factor, weight_clip=weight_clip).to(self.device)
-        self.target_optimizer = torch.optim.Adam(self.bidding_policy.parameters(), lr=self.lr, weight_decay=1e-4, amsgrad=True)
+        self.optimizer = torch.optim.Adam(self.bidding_policy.parameters(), lr=self.lr, weight_decay=1e-6, amsgrad=True)
         self.b = []
         self.propensity = []
 
@@ -770,16 +791,16 @@ class IPSBidder(Bidder):
 
         self.bidding_policy.train()
         N = X.size(0)
-        batch_size = 512
-        epochs = 500
+        batch_size = min(N, 512)
+        epochs = 10
         for epoch in range(epochs):
-            for _ in range(int(N/batch_size)):
+            shuffled_ind = self.rng.choice(N, size=N, replace=False)
+            for i in range(int(N/batch_size)):
+                ind = shuffled_ind[i*batch_size:(i+1)*batch_size]
                 self.optimizer.zero_grad()
-                ind = self.rng.choice(N)
-                self.target_optimizer.zero_grad()
                 loss = self.bidding_policy.loss(X[ind], V[ind], b[ind], logging_pp=logging_pp[ind], utility=U[ind])
                 loss.backward()
-                self.target_optimizer.step()
+                self.optimizer.step()
         self.bidding_policy.eval()
 
     def clear_logs(self, memory):
@@ -796,9 +817,10 @@ class DRBidder(Bidder):
         self.lr = lr
 
         self.winrate_model = NeuralWinRateEstimator(context_dim).to(self.device)
+        self.winrate_optimizer = torch.optim.Adam(self.winrate_model.parameters(), lr=self.lr, weight_decay=1e-6, amsgrad=True)
 
         self.bidding_policy = StochasticPolicy(context_dim, 'DR', entropy_factor=entropy_factor, weight_clip=weight_clip).to(self.device)
-        self.target_optimizer = torch.optim.Adam(self.bidding_policy.parameters(), lr=self.lr, weight_decay=1e-4, amsgrad=True)
+        self.policy_optimizer = torch.optim.Adam(self.bidding_policy.parameters(), lr=self.lr, weight_decay=1e-6, amsgrad=True)
         self.b = []
         self.propensity = []
     
@@ -876,12 +898,11 @@ class DRBidder(Bidder):
 
         self.winrate_model.train()
         epochs = 100
-        optimizer = torch.optim.Adam(self.winrate_model.parameters(), lr=self.lr, weight_decay=1e-6, amsgrad=True)
         for epoch in range(int(epochs)):
-            optimizer.zero_grad()
+            self.winrate_optimizer.zero_grad()
             loss = self.winrate_model.loss(X, y)
             loss.backward()
-            optimizer.step()
+            self.winrate_optimizer.step()
         self.winrate_model.eval()
 
         #update policy
@@ -894,17 +915,16 @@ class DRBidder(Bidder):
         self.bidding_policy.train()
         self.winrate_model.requires_grad_(False)
         N = X.size(0)
-        batch_size = 512
-        epochs = 500
+        batch_size = min(N, 512)
+        epochs = 10
         for epoch in range(epochs):
-            for _ in range(int(N/batch_size)):
-                self.optimizer.zero_grad()
-                ind = self.rng.choice(N)
-                self.target_optimizer.zero_grad()
-                loss = self.bidding_policy.loss(X[ind], V[ind], b[ind], logging_pp=logging_pp[ind], utility=U[ind])
+            shuffled_ind = self.rng.choice(N, size=N, replace=False)
+            for i in range(int(N/batch_size)):
+                ind = shuffled_ind[i*batch_size:(i+1)*batch_size]
+                self.policy_optimizer.zero_grad()
+                loss = self.bidding_policy.loss(X[ind], V[ind], b[ind], logging_pp=logging_pp[ind], utility=U[ind], winrate_model=self.winrate_model)
                 loss.backward()
-                self.target_optimizer.step()
-        self.bidding_policy.eval()
+                self.policy_optimizer.step()
         self.winrate_model.requires_grad_(True)
 
     def clear_logs(self, memory):
@@ -918,6 +938,6 @@ class RichBidder(Bidder):
         super().__init__(rng)
         self.b = []
 
-    def bid(self, value, context, estimated_CTR):
+    def bid(self, value, context, mean_CTR, uncertainty):
         self.b.append(value*2.0)
-        return value * 2.0
+        return value * 2.0, mean_CTR
