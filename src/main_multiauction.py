@@ -193,11 +193,14 @@ def simulation_run(run, auctions):
         
         if i % int(update_interval/len(auctions)) == 0:
             logs = []
+            item_feature = []
             for agent, auction in zip(agents, auctions):
                 logs.extend(agent.logs)
+                ind = np.array(list(opp.item for opp in agent.logs))
+                item_feature.append(agent.items[ind])
+            item_feature = np.concatenate(item_feature, axis=0)
 
             contexts = np.array(list(opp.context for opp in logs))
-            items = np.array(list(opp.item for opp in logs))
             values = np.array(list(opp.value for opp in logs))
             bids = np.array(list(opp.bid for opp in logs))
             prices = np.array(list(opp.price for opp in logs))
@@ -206,7 +209,7 @@ def simulation_run(run, auctions):
             utilities = np.array(list(opp.utility for opp in logs))
             won_mask = np.array(list(opp.won for opp in logs))
 
-            agents[0].allocator.update(contexts[won_mask], items[won_mask], outcomes[won_mask], agents[0].name)
+            agents[0].allocator.update_(contexts[won_mask], item_feature[won_mask], outcomes[won_mask])
             agents[0].bidder.update(contexts, values, bids, prices, outcomes, estimated_CTRs, won_mask, utilities, agents[0].name)
             for j in np.arange(1, num_auctions):
                 agents[j].allocator.copy_param(agents[0].allocator)

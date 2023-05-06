@@ -150,6 +150,34 @@ class NeuralAllocator(Allocator):
                 self.optimizer.step()
                 epoch_loss += loss.item()
         self.net.eval()
+    
+    def update_(self, contexts, features, outcomes):
+        self.count += 1
+
+        X = np.concatenate([contexts, features], axis=1)
+        X, y = torch.Tensor(X).to(self.device), torch.Tensor(outcomes).to(self.device)
+        N = X.shape[0]
+        if N<10:
+            return
+
+        self.net.train()
+        batch_size = N
+        for epoch in range(int(self.num_epochs)):
+            shuffled_ind = self.rng.choice(N, size=N, replace=False)
+            epoch_loss = 0
+            for i in range(int(N/batch_size)):
+                self.optimizer.zero_grad()
+                ind = shuffled_ind[i*batch_size:(i+1)*batch_size]
+                X_ = X[ind]
+                y_ = y[ind]
+                if self.mode=='Epsilon-greedy':
+                    loss = self.net.loss(self.net(X_).squeeze(), y_)
+                else:
+                    loss = self.net.loss(self.net(X_).squeeze(), y_, N)
+                loss.backward()
+                self.optimizer.step()
+                epoch_loss += loss.item()
+        self.net.eval()
 
     def estimate_CTR(self, context, TS=False):
         if TS:
@@ -304,6 +332,9 @@ class LogisticAllocatorM(Allocator):
 
     def update(self, contexts, items, outcomes, name):
         self.model.update(contexts, items, outcomes, name)
+    
+    def update_(self, contexts, features, outcomes):
+        self.model.update_(self, contexts, features, outcomes)
 
     def estimate_CTR(self, context, UCB=False, TS=False):
         return self.model.estimate_CTR(context, UCB, TS)
@@ -486,6 +517,28 @@ class NeuralBootstrapAllocator(Allocator):
 
         self.net.train()
         # batch_size = min(N, self.batch_size)
+        batch_size = N
+
+        for epoch in range(int(self.num_epochs)):
+            N = X.size(0)
+            ind_list = [np.random.choice(N, size=int(N*self.bootstrap)) for _ in range(self.num_heads)]
+            for i in range(self.num_heads):
+                self.optimizer.zero_grad()
+                ind = ind_list[i]
+                X_ = X[ind]
+                y_ = y[ind]
+                loss = self.net.loss(X_, y_, i)
+                loss.backward()
+                self.optimizer.step()
+        self.net.eval()
+    
+    def update_(self, contexts, features, outcomes):
+        X = np.concatenate([contexts, features], axis=1)
+        X, y = torch.Tensor(X).to(self.device), torch.Tensor(outcomes).to(self.device)
+        N = X.shape[0]
+        if N<10:
+            return
+        self.net.train()
         batch_size = N
 
         for epoch in range(int(self.num_epochs)):

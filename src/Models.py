@@ -351,9 +351,41 @@ class LogisticRegressionM(nn.Module):
             self.S_inv += y[i] * np.outer(phi, phi)
         self.S = torch.Tensor(np.diag(np.diag(self.S_inv)**(-1))).to(self.device)
         self.sqrt_S = torch.Tensor(np.diag(np.sqrt(np.diag(self.S_inv)+1e-6)**(-1))).to(self.device)
+    
+    def update_(self, contexts, features, outcomes):
+        context = torch.Tensor(contexts).to(self.device)
+        feature = torch.Tensor(features).to(self.device)
+        y = torch.Tensor(outcomes).to(self.device)
+
+        epochs = 1000
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr, amsgrad=True)
+
+        for epoch in range(int(epochs)):
+            optimizer.zero_grad()
+            loss = self.loss_(context, feature, y)
+            loss.backward()
+            optimizer.step()
+    
+        y = torch.sigmoid(torch.sum(F.linear(context, self.M.T) * feature, dim=1)).numpy(force=True)
+        y = y * (1 - y)
+        contexts = contexts.reshape(-1,self.d)
+
+        self.S_inv = self.S0_inv.numpy(force=True)
+        for i in range(contexts.shape[0]):
+            context = contexts[i]
+            item_feature = features[i]
+            phi = np.outer(context, item_feature).reshape(-1)
+            self.S_inv += y[i] * np.outer(phi, phi)
+        self.S = torch.Tensor(np.diag(np.diag(self.S_inv)**(-1))).to(self.device)
+        self.sqrt_S = torch.Tensor(np.diag(np.sqrt(np.diag(self.S_inv)+1e-6)**(-1))).to(self.device)
 
     def loss(self, X, A, y):
         y_pred = self(X, A)
+        m = self.flatten(self.M)
+        return self.BCE(y_pred, y) + torch.sum(m.T @ self.S0_inv @ m / 2)
+    
+    def loss_(self, context, feature, y):
+        y_pred = torch.sigmoid(torch.sum(F.linear(context, self.M.T) * feature, dim=1))
         m = self.flatten(self.M)
         return self.BCE(y_pred, y) + torch.sum(m.T @ self.S0_inv @ m / 2)
     
