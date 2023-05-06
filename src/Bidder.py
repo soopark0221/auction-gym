@@ -627,7 +627,7 @@ class OracleBidder(Bidder):
             self.b = self.b[-memory:]
 
 class DefaultBidder(Bidder):
-    def __init__(self, rng, lr, context_dim, optimism_scale, noise=0.0):
+    def __init__(self, rng, lr, context_dim, optimism_scale=5.0, noise=0.0, eq_winning_rate=2.0, overbidding_factor=5.0, overbidding_steps=1e4):
         super().__init__(rng)
         self.lr = lr
         self.context_dim = context_dim
@@ -641,6 +641,9 @@ class DefaultBidder(Bidder):
         self.G_w = np.eye(self.context_dim)
         self.G_l = np.eye(self.context_dim)
         self.optimism_scale = optimism_scale
+        self.eq_winning_rate = eq_winning_rate
+        self.overbidding_factor = overbidding_factor
+        self.overbidding_steps = overbidding_steps
     
     def initialize(self, item_values):
         self.item_values = item_values
@@ -682,20 +685,19 @@ class DefaultBidder(Bidder):
         lost_count = context @ self.G_l @ context
         total_count = (won_count + lost_count) / np.sum(context**2)
 
-        if self.rng.uniform(0,1) < 0.9:
-            optimism = self.optimism_scale * np.log((5*lost_count+1e-6)/(won_count+1e-6))**3 * np.exp(-1e-4 * total_count)
-        else:
-            optimism = self.optimism_scale * np.log((lost_count+1e-6)/(won_count+1e-6))**3 * np.exp(-1e-4 * total_count)
-
-        # if self.rng.uniform(0,1) < (5*lost_count+1e-6)/(won_count+1e-6):
-        #     optimism = self.optimism_scale * np.exp(-1e-4 * total_count)
-        # else:
-        #     optimism = -self.optimism_scale * np.exp(-1e-4 * total_count)
-
+        # optimism = self.optimism_scale * np.log((self.eq_winning_rate*lost_count+1e-6)/(won_count+1e-6))**3 * np.exp(-1e-3 * total_count)
+        optimism = self.optimism_scale * np.exp(-total_count/self.overbidding_steps)
         optimistic_value = value * (mean_CTR + optimism * uncertainty)
-        estimated_utility = prob_win * (optimistic_value - b_grid)
-        bid = b_grid[np.argmax(estimated_utility)]
-        
+
+        # induce overbidding to collect data
+        if self.rng.uniform(0,1) < 0.9:
+            estimated_utility = prob_win * (optimistic_value - b_grid)
+            bid = b_grid[np.argmax(estimated_utility)]
+            bid += self.overbidding_factor * value * (0.1 * np.log((self.eq_winning_rate*lost_count+1e-6)/(won_count+1e-6))**2 + np.sqrt(1/(won_count+1e-2))) * np.exp(-total_count/self.overbidding_steps)
+        else:
+            estimated_utility = prob_win * (value * mean_CTR - b_grid)
+            bid = b_grid[np.argmax(estimated_utility)]
+
         bid = np.clip(bid+self.rng.normal(0,self.noise)*value, 0.1*value, 1.5*value)
 
         self.b.append(bid)
@@ -733,6 +735,12 @@ class DefaultBidder(Bidder):
             pass
         else:
             self.b = self.b[-memory:]
+        
+    def copy_param(self, ref):
+        self.winrate_model.linear1.weight.data = ref.winrate_model.linear1.weight.clone().detach()
+        self.winrate_model.linear1.bias.data = ref.winrate_model.linear1.bias.clone().detach()
+        self.winrate_model.linear2.weight.data = ref.winrate_model.linear2.weight.clone().detach()
+        self.winrate_model.linear2.bias.data = ref.winrate_model.linear2.bias.clone().detach()
 
 class IPSBidder(Bidder):
     def __init__(self, rng, lr, context_dim, entropy_factor, use_WIS=False, weight_clip=1e2):

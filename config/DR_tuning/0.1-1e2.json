@@ -1,0 +1,35 @@
+{
+    "agents": [ {
+      "name": "Competitor-Truthful",
+      "num_copies": 2,
+      "num_items": 10,
+        "allocator": {
+          "type": "OracleAllocator",
+          "kwargs": {}
+        },
+        "bidder": {
+            "type": "TruthfulBidder",
+            "kwargs": {}
+      }
+    },
+    {
+      "name": "DR-Oracle",
+      "num_copies": 1,
+      "num_items": 10,
+        "allocator": {
+          "type": "OracleAllocator",
+          "kwargs": {}
+        },
+        "bidder": {
+          "type": "DRBidder",
+          "kwargs": {
+            "lr": 1e-3,
+            "context_dim": 5,
+            "entropy_factor": 0.1,
+            "weight_clip": 1e2
+          }
+      },
+      "memory": "inf"
+    }],
+    "output_dir": "results/DR/"
+  }

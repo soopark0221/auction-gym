@@ -11,7 +11,8 @@ from Impression import ImpressionOpportunity
 
 class Auction:
     ''' Base class for auctions '''
-    def __init__(self, rng, allocation, agents, bilinear_map, agent2items, agents2item_values, max_slots, context_dim, obs_context_dim, context_dist, num_participants_per_round):
+    def __init__(self, rng, allocation, agents, bilinear_map, agent2items, agents2item_values, max_slots, context_dim, obs_context_dim,
+                 context_dist, num_participants_per_round, enable_update=True):
         self.rng = rng
         self.allocation = allocation
         self.agents = agents
@@ -35,6 +36,9 @@ class Auction:
         self.optimal_utility = []
 
         self.num_participants_per_round = num_participants_per_round
+
+        # let the auction instance update agents
+        self.enable_update = enable_update
     
     def generate_context(self):
         if self.context_dist=='Gaussian':
@@ -114,8 +118,10 @@ class Auction:
                 else:
                     agent.set_price(price)
             self.revenue += price
-        for agent in participating_agents:
-            agent.update()
+        
+        if self.enable_update:
+            for agent in participating_agents:
+                agent.update()
 
     def winrate_grid(self, agents, context, b_grid):
         p_grid = np.ones_like(b_grid)

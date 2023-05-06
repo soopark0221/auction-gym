@@ -1,0 +1,41 @@
+{
+    "agents": [ {
+      "name": "Competitor-Truthful",
+      "num_copies": 2,
+      "num_items": 10,
+        "allocator": {
+          "type": "OracleAllocator",
+          "kwargs": {}
+        },
+        "bidder": {
+            "type": "TruthfulBidder",
+            "kwargs": {}
+      }
+    },
+    {
+      "name": "IPS-Logistic-UCB(1.0)",
+      "num_copies": 1,
+      "num_items": 10,
+        "allocator": {
+          "type": "LogisticAllocatorM",
+          "kwargs": {
+            "lr": 1e-3,
+            "context_dim": 5,
+            "num_items": 10,
+            "mode": "\"UCB\"",
+            "c": 1.0
+          }
+        },
+        "bidder": {
+          "type": "IPSBidder",
+          "kwargs": {
+            "lr": 1e-3,
+            "context_dim": 5,
+            "entropy_factor": -0.1,
+            "use_WIS": false
+          }
+      },
+      "memory": "inf"
+    }],
+    "output_dir": "results/IPS-Logistic-UCB/"
+  }

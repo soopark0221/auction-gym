@@ -62,6 +62,7 @@ class NeuralAllocator(Allocator):
         self.optimizer = torch.optim.Adam(self.net.parameters(), lr=self.lr, weight_decay=self.weight_decay, amsgrad=True)
 
     def initialize(self, item_values):
+        return
         self.item_values = item_values
         X = []
         max_value = np.max(self.item_values)
@@ -166,6 +167,15 @@ class NeuralAllocator(Allocator):
             return self.net.get_uncertainty()
         else:
             return np.array([0])
+    
+    def copy_param(self, ref):
+        self.net.linear1.weight.data = ref.net.linear1.weight.clone().detach()
+        self.net.linear1.bias.data = ref.net.linear1.bias.clone().detach()
+        if isinstance(self.net, NeuralRegression2):
+            self.net.linear2.weight.data = ref.net.linear2.weight.clone().detach()
+            self.net.linear2.bias.data = ref.net.linear2.bias.clone().detach()
+        self.net.head.weight.data = ref.net.head.weight.clone().detach()
+        self.net.head.bias.data = ref.net.head.bias.clone().detach()
 
 class LinearAllocator(Allocator):
     def __init__(self, rng, context_dim, mode, c=0.0, eps=0.1):
@@ -301,6 +311,10 @@ class LogisticAllocatorM(Allocator):
     def get_uncertainty(self):
         return self.model.get_uncertainty()
 
+    def copy_param(self, ref):
+        self.model.M.data = ref.model.M.data.clone().detach()
+        self.model.S = ref.model.S.clone().detach()
+        self.model.sqrt_S = ref.model.sqrt_S.clone().detach()
 
 
 class NeuralLogisticAllocator(Allocator):
@@ -436,6 +450,7 @@ class NeuralBootstrapAllocator(Allocator):
         self.uncertainty = []
 
     def initialize(self, item_values):
+        return
         self.item_values = item_values
         X = []
         max_value = np.max(self.item_values)
@@ -469,8 +484,6 @@ class NeuralBootstrapAllocator(Allocator):
         if N<10:
             return
 
-        if self.count%5==0:
-            self.net.reset()
         self.net.train()
         # batch_size = min(N, self.batch_size)
         batch_size = N
@@ -501,11 +514,24 @@ class NeuralBootstrapAllocator(Allocator):
                 mean, std = self.net.UCB_inference(X)
                 self.uncertainty.append(np.mean(std))
                 return mean, std
+            else:
+                X = torch.Tensor(np.concatenate([np.tile(context.reshape(1,-1),(self.K, 1)), self.item_features],axis=1)).to(self.device)
+                mean, std = self.net.UCB_inference(X)
+                return mean
 
     def get_uncertainty(self):
         uncertainty_array = np.array(self.uncertainty)
         self.uncertainty = []
         return uncertainty_array
+    
+    def copy_param(self, ref):
+        self.net.linear1.weight.data = ref.net.linear1.weight.clone().detach()
+        self.net.linear1.bias.data = ref.net.linear1.bias.clone().detach()
+        self.net.linear2.weight.data = ref.net.linear2.weight.clone().detach()
+        self.net.linear2.bias.data = ref.net.linear2.bias.clone().detach()
+        for i in range(self.num_heads):
+            self.net.heads[i].weight.data = ref.net.heads[i].weight.clone().detach()
+            self.net.heads[i].bias.data = ref.net.heads[i].bias.clone().detach()
 
 
 class NTKAllocator(Allocator):

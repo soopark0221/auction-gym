@@ -31,7 +31,7 @@
           "kwargs": {
             "lr": 1e-3,
             "context_dim": 5,
-            "noise": 0.01
+            "noise": 0.0
           }
       },
       "memory": "inf"

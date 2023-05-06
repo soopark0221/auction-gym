@@ -480,7 +480,7 @@ class BayesianNeuralRegression(nn.Module):
         self.eval()
 
     def forward(self, x, MAP=False):
-        x = torch.sigmoid(self.linear1(x, not MAP))
+        x = torch.relu(self.linear1(x, not MAP))
         return torch.sigmoid(self.linear2(x, not MAP))
 
     def loss(self, predictions, labels, N):
@@ -506,8 +506,8 @@ class BayesianNeuralRegression2(nn.Module):
         self.eval()
 
     def forward(self, x, MAP=False):
-        x = torch.sigmoid(self.linear1(x, not MAP))
-        x = torch.sigmoid(self.linear2(x, not MAP))
+        x = torch.relu(self.linear1(x, not MAP))
+        x = torch.relu(self.linear2(x, not MAP))
         return torch.sigmoid(self.head(x, not MAP))
 
     def loss(self, predictions, labels, N):
@@ -539,7 +539,7 @@ class NeuralRegression(nn.Module):
         self.head.weight.data=torch.cat([last_init,-last_init],axis=1)
         
     def forward(self, x):
-        x = torch.sigmoid(self.feature(x))
+        x = torch.relu(self.feature(x))
         return torch.sigmoid(self.head(x))
 
     def loss(self, predictions, labels):
@@ -558,8 +558,8 @@ class NeuralRegression2(nn.Module):
         self.eval()
 
     def forward(self, x):
-        x = torch.sigmoid(self.linear1(x))
-        x = torch.sigmoid(self.linear2(x))
+        x = torch.relu(self.linear1(x))
+        x = torch.relu(self.linear2(x))
         return torch.sigmoid(self.head(x))
 
     def loss(self, predictions, labels):
@@ -572,28 +572,33 @@ class MultiheadNeuralRegression(nn.Module):
         self.d = input_dim
         self.h = latent_dim
         self.num_heads = num_heads
-        self.linear = nn.Linear(self.d, self.h)
+        self.linear1 = nn.Linear(self.d, self.h)
+        self.linear2 = nn.Linear(self.h, self.h)
         self.heads = [nn.Linear(self.h, 1).to(self.device) for _ in range(num_heads)]
         self.BCE = nn.BCELoss()
         self.eval()
     
     def reset(self):
-        self.linear = nn.Linear(self.d, self.h)
+        self.linear1 = nn.Linear(self.d, self.h)
+        self.linear2 = nn.Linear(self.h, self.h)
         self.heads = [nn.Linear(self.h, 1).to(self.device) for _ in range(self.num_heads)]
         self.to(self.device)
     
     def forward(self, x, i):
-        x = torch.sigmoid(self.linear(x))
+        x = torch.relu(self.linear1(x))
+        x = torch.relu(self.linear2(x))
         return torch.sigmoid(self.heads[i](x))
 
     def UCB_inference(self, x):
-        x = torch.sigmoid(self.linear(x))
+        x = torch.relu(self.linear1(x))
+        x = torch.relu(self.linear2(x))
         y = [torch.sigmoid(self.heads[i](x)).numpy(force=True).reshape(-1) for i in range(self.num_heads)]
         y = np.stack(y)
         return np.mean(y, axis=0), np.std(y, axis=0)
 
     def TS_inference(self,x):
-        x = torch.sigmoid(self.linear(x))
+        x = torch.relu(self.linear1(x))
+        x = torch.relu(self.linear2(x))
         y = [torch.sigmoid(self.heads[i](x)).numpy(force=True).reshape(-1) for i in range(self.num_heads)]
         return np.stack(y)
 
