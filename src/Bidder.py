@@ -707,7 +707,9 @@ class DefaultBidder(Bidder):
             return
         N = len(bids)
         won_context = contexts[won_mask]
+        won_context = won_context / np.sqrt(np.sum(won_context**2, axis=1, keepdims=True))
         lost_context = contexts[~won_mask]
+        lost_context = lost_context / np.sqrt(np.sum(lost_context**2, axis=1, keepdims=True))
         self.G_w =  won_context.T @ won_context
         self.G_l = lost_context.T @ lost_context
 

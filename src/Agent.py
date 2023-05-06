@@ -34,13 +34,14 @@ class Agent:
         self.allocator = allocator
         self.bidder = bidder
         
-        self.clock = 0
+        self.clock = 1
         self.record_index = 0
 
         self.update_interval = update_interval
         self.memory = memory
 
         self.item_selection = np.zeros((self.num_items,)).astype(int)
+        self.Gram = [np.zeros((self.context_dim, self.context_dim)) for _ in range(self.num_items)]
     
     def should_explore(self):
         if isinstance(self.bidder, OracleBidder) or self.random_bidding_mode=='None':
@@ -56,32 +57,55 @@ class Agent:
         # Estimate CTR for all items
         if not isinstance(self.allocator, OracleAllocator) and self.allocator.mode=='UCB':
             estim_CTRs, uncertainty = self.allocator.estimate_CTR(context, UCB=True)
-            best_item = np.argmax(self.item_values * (estim_CTRs + self.allocator.c * uncertainty))
+            if isinstance(self.allocator, LogisticAllocatorM):
+                best_item = np.argmax(self.item_values * (estim_CTRs + self.allocator.c * uncertainty))
+            else:
+                # bonus = np.sqrt(np.log(self.clock)/(self.item_selection + 1e-2))
+                bonus = np.array([context @ self.Gram[i] @ context for i in range(self.num_items)])/np.sum(context**2)
+                # bonus = np.sqrt(1/(bonus+1e-2))
+                bonus = 1/(bonus+1e-2)
+                best_item = np.argmax(self.item_values * (estim_CTRs + self.allocator.c * uncertainty) + bonus)
+
         elif not isinstance(self.allocator, OracleAllocator) and self.allocator.mode=='TS':
             estim_CTRs = self.allocator.estimate_CTR(context, TS=True)
             TS_CTR = []
             for i in range(5):
                 TS_CTR.append(self.allocator.estimate_CTR(context, TS=True).reshape(-1))
             TS_CTR = np.stack(TS_CTR)
-            best_item = np.argmax(estim_CTRs * self.item_values)
+            if isinstance(self.allocator, LogisticAllocatorM):
+                best_item = np.argmax(self.item_values * estim_CTRs)
+            else:
+                # bonus = np.sqrt(np.log(self.clock)/(self.item_selection + 1e-2))
+                bonus = np.array([context @ self.Gram[i] @ context for i in range(self.num_items)])/np.sum(context**2)
+                bonus = np.sqrt(1/(bonus+1e-2))
+                best_item = np.argmax(self.item_values * estim_CTRs + bonus)
             estim_CTRs = self.allocator.estimate_CTR(context)
             uncertainty = np.std(TS_CTR, axis=0)
+
         else:
             estim_CTRs = self.allocator.estimate_CTR(context)
             uncertainty = 0.0
-            best_item = np.argmax(self.item_values * estim_CTRs)
+            if isinstance(self.allocator, OracleAllocator) or isinstance(self.allocator, LogisticAllocatorM):
+                best_item = np.argmax(self.item_values * estim_CTRs)
+            else:
+                # bonus = np.sqrt(np.log(self.clock)/(self.item_selection + 1e-2))
+                bonus = np.array([context @ self.Gram[i] @ context for i in range(self.num_items)])/np.sum(context**2)
+                bonus = np.sqrt(1/(bonus+1e-2))
+                best_item = np.argmax(self.item_values * estim_CTRs + bonus)
 
         if not isinstance(self.allocator, OracleAllocator) and self.allocator.mode=='Epsilon-greedy':
             if self.rng.uniform(0,1)<self.allocator.eps:
                 best_item = self.rng.choice(self.num_items, 1).item()
 
         if not isinstance(self.allocator, OracleAllocator) and (self.allocator.mode=='UCB' or self.allocator.mode=='TS'):
+            if self.clock < 5000:
+                best_item = self.rng.choice(self.num_items, 1).item()
             return best_item, estim_CTRs[best_item], uncertainty[best_item]
+            
         else:
             return best_item, estim_CTRs[best_item], uncertainty
 
     def bid(self, context, value=None, prob_win=None, b_grid=None):
-        self.clock += 1
         # First, pick what item we want to choose
         best_item, estimated_CTR, uncertainty = self.select_item(context)
         optimistic_CTR = estimated_CTR
@@ -132,6 +156,8 @@ class Agent:
                                                bidding_error=0.0))
 
         self.item_selection[best_item] += 1
+        self.clock += 1
+        self.Gram[best_item] += np.outer(context, context) / np.sum(context**2)
         return bid, best_item
 
     def charge(self, price, second_price, outcome):

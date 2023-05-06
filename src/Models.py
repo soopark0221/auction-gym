@@ -577,6 +577,11 @@ class MultiheadNeuralRegression(nn.Module):
         self.BCE = nn.BCELoss()
         self.eval()
     
+    def reset(self):
+        self.linear = nn.Linear(self.d, self.h)
+        self.heads = [nn.Linear(self.h, 1).to(self.device) for _ in range(self.num_heads)]
+        self.to(self.device)
+    
     def forward(self, x, i):
         x = torch.sigmoid(self.linear(x))
         return torch.sigmoid(self.heads[i](x))

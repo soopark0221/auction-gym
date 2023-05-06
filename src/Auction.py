@@ -46,7 +46,7 @@ class Auction:
 
     def CTR(self, context, item_features):
         # CTR = sigmoid(context @ M @ item_feature) for each item
-        return sigmoid(item_features @ self.M.T @ context / np.sqrt(self.context_dim*item_features.shape[1]))
+        return sigmoid(item_features @ self.M.T @ context / np.sqrt(self.context_dim))
 
     def simulate_opportunity(self):
         # Sample the number of slots uniformly between [1, max_slots]

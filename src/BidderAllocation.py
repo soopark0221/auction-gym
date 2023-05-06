@@ -54,16 +54,14 @@ class NeuralAllocator(Allocator):
             if num_layers==1:
                 self.net = BayesianNeuralRegression(context_dim+self.feature_dim, latent_dim, prior_var).to(self.device)
             else:
-                self.net = BayesianNeuralRegression(context_dim+self.feature_dim, latent_dim, prior_var).to(self.device)
+                self.net = BayesianNeuralRegression2(context_dim+self.feature_dim, latent_dim, prior_var).to(self.device)
         self.count = 0
         self.lr = lr
         self.batch_size = batch_size
         self.weight_decay = weight_decay
         self.optimizer = torch.optim.Adam(self.net.parameters(), lr=self.lr, weight_decay=self.weight_decay, amsgrad=True)
-        # self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, verbose=True)
-    
+
     def initialize(self, item_values):
-        return
         self.item_values = item_values
         X = []
         max_value = np.max(self.item_values)
@@ -79,10 +77,14 @@ class NeuralAllocator(Allocator):
         optimizer = torch.optim.Adam(self.net.parameters(), lr=self.lr, weight_decay=1e-6, amsgrad=True)
         BCE = nn.BCELoss()
         self.net.train()
+        N = y.size(0)
         for epoch in tqdm(range(epochs), desc='initializing allocator'):
             optimizer.zero_grad()
             y_pred = self.net(X)
-            loss = BCE(y_pred.squeeze(), y)
+            if self.mode=='Epsilon-greedy':
+                loss = self.net.loss(self.net(X).squeeze(), y)
+            else:
+                loss = self.net.loss(self.net(X).squeeze(), y, N)
             loss.backward()
             optimizer.step()
         self.net.eval()
@@ -146,9 +148,6 @@ class NeuralAllocator(Allocator):
                 loss.backward()
                 self.optimizer.step()
                 epoch_loss += loss.item()
-            # self.scheduler.step(epoch_loss)
-            if epoch==self.num_epochs-1:
-                print('epoch loss' + str(epoch_loss))
         self.net.eval()
 
     def estimate_CTR(self, context, TS=False):
@@ -437,7 +436,6 @@ class NeuralBootstrapAllocator(Allocator):
         self.uncertainty = []
 
     def initialize(self, item_values):
-        return
         self.item_values = item_values
         X = []
         max_value = np.max(self.item_values)
@@ -455,8 +453,9 @@ class NeuralBootstrapAllocator(Allocator):
         self.net.train()
         for epoch in tqdm(range(epochs), desc='initializing allocator'):
             optimizer.zero_grad()
-            y_pred = self.net(X)
-            loss = BCE(y_pred.squeeze(), y)
+            loss = torch.tensor(0).to(self.device)
+            for i in range(self.num_heads):
+                loss += self.net.loss(X_init, y_init, i)
             loss.backward()
             optimizer.step()
         self.net.eval()
@@ -470,6 +469,8 @@ class NeuralBootstrapAllocator(Allocator):
         if N<10:
             return
 
+        if self.count%5==0:
+            self.net.reset()
         self.net.train()
         # batch_size = min(N, self.batch_size)
         batch_size = N
@@ -606,7 +607,7 @@ class OracleAllocator(Allocator):
         self.M = M
 
     def estimate_CTR(self, context):
-        return sigmoid(self.item_features @ self.M.T @ context / np.sqrt(context.shape[0]*self.item_features.shape[1]))
+        return sigmoid(self.item_features @ self.M.T @ context / np.sqrt(context.shape[0]))
     
     def get_uncertainty(self):
         return np.array([0])
