@@ -508,6 +508,7 @@ if __name__ == '__main__':
     rng = np.random.default_rng(training_config['random_seed'])
     np.random.seed(training_config['random_seed'])
 
+    num_auctions = training_config['num_auctions']
     num_runs = training_config['num_runs']
     num_iter  = training_config['num_iter']
     record_interval = training_config['record_interval']
@@ -526,6 +527,7 @@ if __name__ == '__main__':
     eq_winning_rates = training_config['eq_winning_rate']
     overbidding_factors = training_config['overbidding_factor']
     overbidding_steps = training_config['overbidding_steps']
+    overbidding_steps = [int(steps/num_auctions) for steps in overbidding_steps]
 
     os.environ["CUDA_VISIBLE_DEVICES"]= args.cuda
     print("running in {}".format('cuda' if torch.cuda.is_available() else 'cpu'))
@@ -564,8 +566,6 @@ if __name__ == '__main__':
     run2winrate_optimal = {}
     run2utility_optimal = {}
     run2optimistic_CTR_ratio = {}
-
-    num_auctions = training_config['num_auctions']
 
     # check: agents in different auction has different item features
     run2auction2items, run2auction2item_values, run2competitors2items, run2competitors2item_values, run2bilinear_map = \

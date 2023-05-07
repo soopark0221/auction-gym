@@ -100,8 +100,7 @@ class NeuralAllocator(Allocator):
             return
 
         self.net.train()
-        # batch_size = min(N, self.batch_size)
-        batch_size = N
+        batch_size = min(N, self.batch_size)
 
         # index_per_item = {}
         # num_selection = np.zeros((self.K,))
@@ -334,7 +333,7 @@ class LogisticAllocatorM(Allocator):
         self.model.update(contexts, items, outcomes, name)
     
     def update_(self, contexts, features, outcomes):
-        self.model.update_(self, contexts, features, outcomes)
+        self.model.update_(contexts, features, outcomes)
 
     def estimate_CTR(self, context, UCB=False, TS=False):
         return self.model.estimate_CTR(context, UCB, TS)
@@ -516,20 +515,20 @@ class NeuralBootstrapAllocator(Allocator):
             return
 
         self.net.train()
-        # batch_size = min(N, self.batch_size)
-        batch_size = N
+        batch_size = min(N, self.batch_size)
+        # batch_size = N
 
         for epoch in range(int(self.num_epochs)):
-            N = X.size(0)
             ind_list = [np.random.choice(N, size=int(N*self.bootstrap)) for _ in range(self.num_heads)]
             for i in range(self.num_heads):
-                self.optimizer.zero_grad()
-                ind = ind_list[i]
-                X_ = X[ind]
-                y_ = y[ind]
-                loss = self.net.loss(X_, y_, i)
-                loss.backward()
-                self.optimizer.step()
+                for j in range(int(len(ind_list)/batch_size)):
+                    self.optimizer.zero_grad()
+                    ind = ind_list[i][batch_size*j:batch_size*(j+1)]
+                    X_ = X[ind]
+                    y_ = y[ind]
+                    loss = self.net.loss(X_, y_, i)
+                    loss.backward()
+                    self.optimizer.step()
         self.net.eval()
     
     def update_(self, contexts, features, outcomes):
@@ -539,19 +538,19 @@ class NeuralBootstrapAllocator(Allocator):
         if N<10:
             return
         self.net.train()
-        batch_size = N
+        batch_size = min(N, self.batch_size)
 
         for epoch in range(int(self.num_epochs)):
-            N = X.size(0)
             ind_list = [np.random.choice(N, size=int(N*self.bootstrap)) for _ in range(self.num_heads)]
             for i in range(self.num_heads):
-                self.optimizer.zero_grad()
-                ind = ind_list[i]
-                X_ = X[ind]
-                y_ = y[ind]
-                loss = self.net.loss(X_, y_, i)
-                loss.backward()
-                self.optimizer.step()
+                for j in range(int(len(ind_list)/batch_size)):
+                    self.optimizer.zero_grad()
+                    ind = ind_list[i][batch_size*j:batch_size*(j+1)]
+                    X_ = X[ind]
+                    y_ = y[ind]
+                    loss = self.net.loss(X_, y_, i)
+                    loss.backward()
+                    self.optimizer.step()
         self.net.eval()
 
     def estimate_CTR(self, context, TS=False, UCB=False):

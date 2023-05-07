@@ -1,7 +1,7 @@
 {
     "random_seed": 0,
-    "num_runs": 1,
-    "num_iter" : 50000,
+    "num_runs": 3,
+    "num_iter" : 30000,
     "record_interval": 500,
     "update_interval": 100,
     "num_participants_per_round": 3,
@@ -10,7 +10,7 @@
     "feature_dim": 5,
     "item_feature_var": 1.0,
     "context_distribution": "Gaussian",
-    "random_bidding": "None 20 1.05",
+    "random_bidding": "uniform 50 1.01",
     "allocation": "FirstPrice",
     "network_architecture": "input-16-output",
     "use_optimistic": "True"

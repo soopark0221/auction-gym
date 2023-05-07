@@ -10,7 +10,7 @@ from Bidder import TruthfulBidder
 class Agent:
     ''' An agent representing an advertiser '''
 
-    def __init__(self, rng, name, item_features, item_values, allocator, bidder, context_dim, update_interval, random_bidding, memory, bonus_factor=0.5):
+    def __init__(self, rng, name, item_features, item_values, allocator, bidder, context_dim, update_interval, random_bidding, memory, bonus_factor=2.0):
         self.rng = rng
         self.name = name
         self.items = item_features

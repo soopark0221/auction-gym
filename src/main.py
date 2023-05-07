@@ -84,7 +84,8 @@ def instantiate_agents(rng, agent_configs, agents2item_values, agents2item_featu
               context_dim = obs_context_dim,
               update_interval=update_interval,
               random_bidding = random_bidding,
-              memory=('inf' if 'memory' not in agent_config.keys() else agent_config['memory']))
+              memory=('inf' if 'memory' not in agent_config.keys() else agent_config['memory']),
+              bonus_factor=(agent_config['bonus_factor'] if 'bonus_factor' in agent_config.keys() else 1.0))
         for agent_config in agent_configs
     ]
 
@@ -499,10 +500,28 @@ if __name__ == '__main__':
         run2matrix_error[run] = matrix_error
         run2item_selection[run] = item_selection
 
+    for a in agent_configs:
+        if not 'Competitor' in a['name']:
+            bonus_factor = a['bonus_factor']
+            if 'None' in random_bidding:
+                optimism_scale, overbidding_factor, eq_winning_rate, overbidding_steps = \
+                a['bidder']['kwargs']['optimism_scale'], a['bidder']['kwargs']['overbidding_factor'], a['bidder']['kwargs']['eq_winning_rate'], a['bidder']['kwargs']['overbidding_steps']
+            else:
+                split = random_bidding.split()
+                init_random_bidding = split[1]
+                decay = split[2]
+            agent_name = a['name'].split()[0]
 
     plot_vector_measure(run2bidding_error, 'Bidding Error')
     plot_vector_measure(run2bidding_optimal, 'Bidding of Optimal Agent')
-    plot_measure(run2optimal_selection_rate, 'Optimal Selection Rate')
+    optimal_selection_df = plot_measure(run2optimal_selection_rate, 'Optimal Selection Rate')
+    optimal_selection_df['bonus_factor'] = bonus_factor
+    if 'None' in random_bidding:
+        optimal_selection_df['optimism_scale'], optimal_selection_df['overbidding_factor'], optimal_selection_df['eq_winning_rate'], optimal_selection_df['overbidding_steps'] = \
+        [optimism_scale, overbidding_factor, eq_winning_rate, overbidding_steps]
+    else:
+        optimal_selection_df['init_random_bidding'], optimal_selection_df['decay'] = init_random_bidding, decay
+    optimal_selection_df.to_csv(f'{output_dir}/{agent_name}_optimal_selection_rate.csv', index=False)
     
     utility_df = measure_per_agent2df(run2agent2net_utility, 'Utility')
     optimal_utility_df = measure2df(run2utility_optimal, 'Utility')
@@ -510,18 +529,23 @@ if __name__ == '__main__':
     utility_df = pd.concat([utility_df, optimal_utility_df]).sort_values(['Agent', 'Run', 'Step'])
     utility_df['Utility (Cumulative)'] = utility_df.groupby(['Agent', 'Run'])['Utility'].cumsum()
     plot_measure_per_agent(utility_df, 'Utility')
-
     plot_measure_per_agent(utility_df, 'Utility (Cumulative)')
-    utility_df.to_csv(f'{output_dir}/net_utility.csv', index=False)
+    utility_df['bonus_factor'] = bonus_factor
+    if 'None' in random_bidding:
+        utility_df['optimism_scale'], utility_df['overbidding_factor'], utility_df['eq_winning_rate'], utility_df['overbidding_steps'] = \
+        [optimism_scale, overbidding_factor, eq_winning_rate, overbidding_steps]
+    else:
+        utility_df['init_random_bidding'], utility_df['decay'] = init_random_bidding, decay
+    utility_df.to_csv(f'{output_dir}/{agent_name}_net_utility.csv', index=False)
 
     plot_measure_per_agent(run2agent2best_expected_value, 'Best Expected Value')
 
     allocation_regret_df = plot_measure_per_agent(run2agent2allocation_regret, 'Allocation Regret')
-    allocation_regret_df.to_csv(f'{output_dir}/allocation_regret.csv', index=False)
+    allocation_regret_df.to_csv(f'{output_dir}/{agent_name}_allocation_regret.csv', index=False)
     overbid_regret_df = plot_measure_per_agent(run2agent2overbid_regret, 'Overbid Regret')
-    overbid_regret_df.to_csv(f'{output_dir}/overbid_regret.csv', index=False)
+    overbid_regret_df.to_csv(f'{output_dir}/{agent_name}_overbid_regret.csv', index=False)
     underbid_regret_df = plot_measure_per_agent(run2agent2underbid_regret, 'Underbid Regret')
-    underbid_regret_df.to_csv(f'{output_dir}/underbid_regret.csv', index=False)
+    underbid_regret_df.to_csv(f'{output_dir}/{agent_name}_underbid_regret.csv', index=False)
 
     plot_measure(run2auction_revenue, 'Auction Revenue')
 
@@ -533,12 +557,26 @@ if __name__ == '__main__':
     optimal_winning_prob_df['Agent'] = 'Optimal'
     winning_prob_df = pd.concat([winning_prob_df, optimal_winning_prob_df])
     plot_measure_per_agent(winning_prob_df, 'Probability of Winning')
-    winning_prob_df.to_csv(f'{output_dir}/winning_probability.csv', index=False)
+    winning_prob_df['bonus_factor'] = bonus_factor
+    if 'None' in random_bidding:
+        winning_prob_df['optimism_scale'], winning_prob_df['overbidding_factor'], winning_prob_df['eq_winning_rate'], winning_prob_df['overbidding_steps'] = \
+        [optimism_scale, overbidding_factor, eq_winning_rate, overbidding_steps]
+    else:
+        winning_prob_df['init_random_bidding'], winning_prob_df['decay'] = init_random_bidding, decay
+    winning_prob_df.to_csv(f'{output_dir}/{agent_name}_winning_probability.csv', index=False)
 
     plot_vector_measure(run2agent2CTR, 'CTR Value')
     # CTR_df.to_csv(f'{output_dir}/CTR.csv', index=False)
 
-    plot_measure_per_agent(run2agent2CTR_RMSE, 'CTR RMSE')
+    CTR_RMSE_df = plot_measure_per_agent(run2agent2CTR_RMSE, 'CTR RMSE')
+    CTR_RMSE_df['bonus_factor'] = bonus_factor
+    if 'None' in random_bidding:
+        CTR_RMSE_df['optimism_scale'], CTR_RMSE_df['overbidding_factor'], CTR_RMSE_df['eq_winning_rate'], CTR_RMSE_df['overbidding_steps'] = \
+        [optimism_scale, overbidding_factor, eq_winning_rate, overbidding_steps]
+    else:
+        CTR_RMSE_df['init_random_bidding'], CTR_RMSE_df['decay'] = init_random_bidding, decay
+    CTR_RMSE_df.to_csv(f'{output_dir}/{agent_name}_CTR_RMSE.csv', index=False)
+
     CTR_df = plot_measure_per_agent(run2agent2CTR_bias, 'CTR Bias', optimal=1.0)
     CTR_df.rename(columns={'CTR Bias':'CTR'}, inplace=True)
     CTR_df = CTR_df[~CTR_df['Agent'].str.startswith('Competitor')]
@@ -547,7 +585,7 @@ if __name__ == '__main__':
     optimistic_CTR_df = measure2df(run2optimistic_CTR_ratio, 'CTR')
     optimistic_CTR_df['Expected or Optimistic'] = 'Optimistic CTR'
     CTR_df = pd.concat([CTR_df, optimistic_CTR_df])
-    CTR_df.to_csv(f'{output_dir}/CTR.csv', index=False)
+    CTR_df.to_csv(f'{output_dir}/{agent_name}_CTR.csv', index=False)
     plot_measure(CTR_df, 'CTR', hue='Expected or Optimistic')
     
     # bidding_df = plot_vector_measure(run2bidding, 'Bidding')
@@ -555,8 +593,15 @@ if __name__ == '__main__':
 
     regret_df = measure2df(run2regret, f'Regret({record_interval}steps)')
     regret_df['Regret'] = regret_df.groupby(['Run'])[f'Regret({record_interval}steps)'].cumsum()
-    regret_df.to_csv(f'{output_dir}/regret.csv', index=False)
     plot_measure(regret_df, 'Regret')
+    regret_df['bonus_factor'] = bonus_factor
+    if 'None' in random_bidding:
+        regret_df['overbidding_factor'], regret_df['eq_winning_rate'], regret_df['overbidding_steps'] = \
+        [optimism_scale, overbidding_factor, eq_winning_rate, overbidding_steps]
+    else:
+        regret_df['init_random_bidding'], regret_df['decay'] = init_random_bidding, decay
+    regret_df.to_csv(f'{output_dir}/{agent_name}_regret.csv', index=False)
+    
 
     # plot_winrate_estimation(run2winrate_estimation)
 
@@ -590,4 +635,4 @@ if __name__ == '__main__':
     plt.yticks(fontsize=FONTSIZE - 2)
     plt.grid(True, 'major', 'y', ls='--', lw=.5, c='k', alpha=.3)
     plt.tight_layout()
-    plt.savefig(f"{output_dir}/item_selection.png", bbox_inches='tight')
+    plt.savefig(f"{output_dir}/{agent_name}_item_selection.png", bbox_inches='tight')

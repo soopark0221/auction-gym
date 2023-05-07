@@ -604,33 +604,28 @@ class MultiheadNeuralRegression(nn.Module):
         self.d = input_dim
         self.h = latent_dim
         self.num_heads = num_heads
-        self.linear1 = nn.Linear(self.d, self.h)
-        self.linear2 = nn.Linear(self.h, self.h)
+        self.linear = nn.Linear(self.d, self.h)
         self.heads = [nn.Linear(self.h, 1).to(self.device) for _ in range(num_heads)]
         self.BCE = nn.BCELoss()
         self.eval()
     
     def reset(self):
-        self.linear1 = nn.Linear(self.d, self.h)
-        self.linear2 = nn.Linear(self.h, self.h)
+        self.linear = nn.Linear(self.d, self.h)
         self.heads = [nn.Linear(self.h, 1).to(self.device) for _ in range(self.num_heads)]
         self.to(self.device)
     
     def forward(self, x, i):
-        x = torch.relu(self.linear1(x))
-        x = torch.relu(self.linear2(x))
+        x = torch.relu(self.linear(x))
         return torch.sigmoid(self.heads[i](x))
 
     def UCB_inference(self, x):
-        x = torch.relu(self.linear1(x))
-        x = torch.relu(self.linear2(x))
+        x = torch.relu(self.linear(x))
         y = [torch.sigmoid(self.heads[i](x)).numpy(force=True).reshape(-1) for i in range(self.num_heads)]
         y = np.stack(y)
         return np.mean(y, axis=0), np.std(y, axis=0)
 
     def TS_inference(self,x):
-        x = torch.relu(self.linear1(x))
-        x = torch.relu(self.linear2(x))
+        x = torch.relu(self.linear(x))
         y = [torch.sigmoid(self.heads[i](x)).numpy(force=True).reshape(-1) for i in range(self.num_heads)]
         return np.stack(y)
 
