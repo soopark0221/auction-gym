@@ -13,9 +13,10 @@
       }
     },
     {
-      "name": "NeuralBoot-UCB(1.0)",
+      "name": "NeuralBoot-TS(0.1)",
       "num_copies": 1,
       "num_items": 10,
+      "bonus_factor": 0.5,
         "allocator": {
           "type": "NeuralBootstrapAllocator",
           "kwargs": {
@@ -26,10 +27,10 @@
             "context_dim": 5,
             "latent_dim": 128,
             "num_items": 10,
-            "num_heads": 10,
+            "num_heads": 5,
             "bootstrap": 1.0,
-            "mode": "\"UCB\"",
-            "c": 1.0
+            "mode": "\"TS\"",
+            "nu": 0.1
           }
         },
         "bidder": {
@@ -37,15 +38,15 @@
           "kwargs": {
             "lr": 1e-3,
             "context_dim": 5,
-            "optimism_scale": 5.0,
-            "eq_winning_rate": 5.0,
-            "overbidding_factor": 5.0,
-            "overbidding_steps": 1e4,
+            "optimism_scale":5.0,
+            "overbidding_factor":1.0,
+            "eq_winning_rate":1.0,
+            "overbidding_steps":1e4,
             "noise": 0.0
           }
       },
       "memory": "inf"
     }],
-    "output_dir": "results/NeuralBoot-UCB/",
+    "output_dir": "results/NeuralBoot-TS/",
     "network_architecture": "input-16-output"
   }

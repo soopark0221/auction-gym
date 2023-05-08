@@ -16,6 +16,7 @@
       "name": "NeuralBoot-TS(1.0)",
       "num_copies": 1,
       "num_items": 10,
+      "bonus_factor": 0.5,
         "allocator": {
           "type": "NeuralBootstrapAllocator",
           "kwargs": {
@@ -37,7 +38,10 @@
           "kwargs": {
             "lr": 1e-3,
             "context_dim": 5,
-            "optimism_scale": 5.0,
+            "optimism_scale":5.0,
+            "overbidding_factor":1.0,
+            "eq_winning_rate":1.0,
+            "overbidding_steps":1e4,
             "noise": 0.0
           }
       },

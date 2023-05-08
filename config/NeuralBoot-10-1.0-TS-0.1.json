@@ -13,9 +13,10 @@
       }
     },
     {
-      "name": "NeuralBoot-TS(1.0)",
+      "name": "NeuralBoot-TS(0.1)",
       "num_copies": 1,
       "num_items": 10,
+      "bonus_factor": 0.5,
         "allocator": {
           "type": "NeuralBootstrapAllocator",
           "kwargs": {
@@ -29,7 +30,7 @@
             "num_heads": 10,
             "bootstrap": 1.0,
             "mode": "\"TS\"",
-            "nu": 1.0
+            "nu": 0.1
           }
         },
         "bidder": {
@@ -37,7 +38,10 @@
           "kwargs": {
             "lr": 1e-3,
             "context_dim": 5,
-            "optimism_scale": 5.0,
+            "optimism_scale":5.0,
+            "overbidding_factor":0.0,
+            "eq_winning_rate":1.0,
+            "overbidding_steps":1e4,
             "noise": 0.0
           }
       },

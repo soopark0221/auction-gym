@@ -627,7 +627,7 @@ class OracleBidder(Bidder):
             self.b = self.b[-memory:]
 
 class DefaultBidder(Bidder):
-    def __init__(self, rng, lr, context_dim, optimism_scale=5.0, noise=0.0, eq_winning_rate=2.0, overbidding_factor=5.0, overbidding_steps=1e4):
+    def __init__(self, rng, lr, context_dim, optimism_scale=1.0, noise=0.0, eq_winning_rate=1.0, overbidding_factor=0.0, overbidding_steps=1e4):
         super().__init__(rng)
         self.lr = lr
         self.context_dim = context_dim
