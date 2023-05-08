@@ -10,7 +10,7 @@ from Bidder import TruthfulBidder
 class Agent:
     ''' An agent representing an advertiser '''
 
-    def __init__(self, rng, name, item_features, item_values, allocator, bidder, context_dim, update_interval, random_bidding, memory, bonus_factor=0.5):
+    def __init__(self, rng, name, item_features, item_values, allocator, bidder, context_dim, update_interval, random_bidding, memory, bonus_factor=0.0):
         self.rng = rng
         self.name = name
         self.items = item_features
@@ -73,28 +73,36 @@ class Agent:
             for i in range(5):
                 TS_CTR.append(self.allocator.estimate_CTR(context, TS=True).reshape(-1))
             TS_CTR = np.stack(TS_CTR)
+            '''
+            best_item = np.argmax(estim_CTRs * self.item_values)
+            estim_CTRs = self.allocator.estimate_CTR(context)
+            uncertainty = np.std(TS_CTR, axis=0)
+            '''
             if isinstance(self.allocator, LogisticAllocatorM):
                 best_item = np.argmax(self.item_values * estim_CTRs)
-            else:
+            elif self.bonus_factor != 0.0:
                 # bonus = np.sqrt(np.log(self.clock)/(self.item_selection + 1e-2))
                 bonus = np.array([context @ self.Gram[i] @ context for i in range(self.num_items)])/np.sum(context**2)
                 bonus = np.sqrt(1/(bonus+1e-2))
                 best_item = np.argmax(self.item_values * estim_CTRs + self.bonus_factor * bonus)
                 # best_item = np.argmax(self.item_values * estim_CTRs)
+            else:
+                best_item = np.argmax(estim_CTRs * self.item_values)
             estim_CTRs = self.allocator.estimate_CTR(context)
             uncertainty = np.std(TS_CTR, axis=0)
-
+            
         else:
             estim_CTRs = self.allocator.estimate_CTR(context)
             uncertainty = 0.0
             if isinstance(self.allocator, OracleAllocator) or isinstance(self.allocator, LogisticAllocatorM):
                 best_item = np.argmax(self.item_values * estim_CTRs)
-            else:
+            elif self.bonus_factor != 0.0:
                 # bonus = np.sqrt(np.log(self.clock)/(self.item_selection + 1e-2))
                 bonus = np.array([context @ self.Gram[i] @ context for i in range(self.num_items)])/np.sum(context**2)
                 bonus = np.sqrt(1/(bonus+1e-2))
                 best_item = np.argmax(self.item_values * estim_CTRs + self.bonus_factor * bonus)
-                # best_item = np.argmax(self.item_values * estim_CTRs)
+            else:
+                best_item = np.argmax(self.item_values * estim_CTRs)
 
         if not isinstance(self.allocator, OracleAllocator) and self.allocator.mode=='Epsilon-greedy':
             if self.rng.uniform(0,1)<self.allocator.eps:
@@ -189,6 +197,7 @@ class Agent:
         self.allocator.update(contexts[won_mask], items[won_mask], outcomes[won_mask], self.name)
 
         # Update bidding model with all data
+        print(self.name, won_mask.sum())
         self.bidder.update(contexts, values, bids, prices, outcomes, estimated_CTRs, won_mask, utilities, self.name)
 
         self.truncate_memory()

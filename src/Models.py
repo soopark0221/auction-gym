@@ -516,8 +516,8 @@ class BayesianNeuralRegression(nn.Module):
         return torch.sigmoid(self.linear2(x, not MAP))
 
     def loss(self, predictions, labels, N):
-        kl_div = self.linear1.KL_div(self.prior_var) + self.linear2.KL_div(self.prior_var)
-        return self.criterion(predictions, labels) + kl_div/N
+        #kl_div = self.linear1.KL_div(self.prior_var) + self.linear2.KL_div(self.prior_var)
+        return self.criterion(predictions, labels) #+ kl_div/N
     
     def get_uncertainty(self):
         uncertainties = [self.linear1.get_uncertainty(),
@@ -558,7 +558,7 @@ class NeuralRegression(nn.Module):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.d = input_dim
         self.h = latent_dim
-        self.feature = nn.Linear(self.d, self.h)
+        self.linear1 = nn.Linear(self.d, self.h)
         self.head = nn.Linear(self.h, 1)
         self.BCE = nn.BCELoss()
         self.eval()
@@ -566,12 +566,12 @@ class NeuralRegression(nn.Module):
     def initialize_weights(self):
         first_init=np.sqrt(4/self.H)*torch.randn((self.H,(self.d//2)-1)).to(self.device)
         first_init=torch.cat([first_init,torch.zeros(self.H,1).to(self.device),torch.zeros(self.H,1).to(self.device),first_init],axis=1)
-        self.feature.weight.data=first_init 
+        self.linear1.weight.data=first_init 
         last_init=np.sqrt(2/self.K)*torch.randn((self.K,self.H//2)).to(self.device)
         self.head.weight.data=torch.cat([last_init,-last_init],axis=1)
         
     def forward(self, x):
-        x = torch.relu(self.feature(x))
+        x = torch.relu(self.linear1(x))
         return torch.sigmoid(self.head(x))
 
     def loss(self, predictions, labels):

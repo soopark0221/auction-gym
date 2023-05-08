@@ -22,10 +22,10 @@
             "lr": 1e-3,
             "batch_size": 512,
             "weight_decay": 1e-6,
-            "num_layers": 2,
-            "num_epochs": 10,
+            "num_layers": 1,
+            "num_epochs": 50,
             "context_dim": 5,
-            "latent_dim": 32,
+            "latent_dim": 128,
             "num_items": 10,
             "mode": "\"Epsilon-greedy\"",
             "eps": 0.1
@@ -36,8 +36,9 @@
           "kwargs": {
             "lr": 1e-3,
             "context_dim": 5,
-            "optimism_scale": 5.0,
-            "noise": 0.0
+            "optimism_scale": 1.0,
+            "noise": 0.0,
+            "overbidding_factor":0.0
           }
       },
       "memory": "inf"

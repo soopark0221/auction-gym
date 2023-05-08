@@ -1,8 +1,8 @@
 {
-    "random_seed": 2,
-    "num_runs": 3,
+    "random_seed": 0,
+    "num_runs": 1,
     "num_iter" : 30000,
-    "record_interval": 500,
+    "record_interval": 100,
     "update_interval": 100,
     "num_participants_per_round": 3,
     "context_dim": 5,
@@ -10,8 +10,9 @@
     "feature_dim": 5,
     "item_feature_var": 1.0,
     "context_distribution": "Gaussian",
-    "random_bidding": "uniform 50 1.01",
+    "random_bidding": "uniform 10 1.05",
     "allocation": "FirstPrice",
-    "network_architecture": "input-16-output",
-    "use_optimistic": "True"
+    "num_auctions": 100,
+    "bonus_factor": [0.0],
+    "optimism_scale": [1.0]
 }

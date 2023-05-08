@@ -1,47 +1,48 @@
 {
-    "agents": [ {
-      "name": "Competitor-Truthful",
-      "num_copies": 2,
-      "num_items": 10,
-        "allocator": {
-          "type": "OracleAllocator",
-          "kwargs": {}
-        },
-        "bidder": {
-            "type": "TruthfulBidder",
-            "kwargs": {}
-      }
-    },
-    {
-      "name": "Neural-TS(0.1)",
-      "num_copies": 1,
-      "num_items": 10,
-        "allocator": {
-          "type": "NeuralAllocator",
-          "kwargs": {
-            "lr": 1e-3,
-            "batch_size": 512,
-            "weight_decay": 1e-6,
-            "num_layers": 2,
-            "num_epochs": 50,
-            "context_dim": 5,
-            "latent_dim": 128,
-            "num_items": 10,
-            "mode": "\"TS\"",
-            "prior_var": 0.1
-          }
-        },
-        "bidder": {
-          "type": "DefaultBidder",
-          "kwargs": {
-            "lr": 1e-3,
-            "context_dim": 5,
-            "optimism_scale": 5.0,
-            "noise": 0.0
-          }
+  "agents": [ {
+    "name": "Competitor-Truthful",
+    "num_copies": 2,
+    "num_items": 10,
+      "allocator": {
+        "type": "OracleAllocator",
+        "kwargs": {}
       },
-      "memory": "inf"
-    }],
-    "output_dir": "results/Neural-TS/",
-    "network_architecture": "input-16-output"
-  }
+      "bidder": {
+          "type": "TruthfulBidder",
+          "kwargs": {}
+    }
+  },
+  {
+    "name": "Neural-TS(0.1)",
+    "num_copies": 1,
+    "num_items": 10,
+      "allocator": {
+        "type": "NeuralAllocator",
+        "kwargs": {
+          "lr": 1e-3,
+          "batch_size": 512,
+          "weight_decay": 1e-6,
+          "num_layers": 1,
+          "num_epochs": 150,
+          "context_dim": 5,
+          "latent_dim": 128,
+          "num_items": 10,
+          "mode": "\"TS\"",
+          "prior_var": 0.1
+        }
+      },
+      "bidder": {
+        "type": "DefaultBidder",
+        "kwargs": {
+          "lr": 1e-3,
+          "context_dim": 5,
+          "optimism_scale": 5.0,
+          "noise": 0.0,
+          "overbidding_factor":0.0
+        }
+    },
+    "memory": "inf"
+  }],
+  "output_dir": "results/Neural-TS/",
+  "network_architecture": "input-16-output"
+}

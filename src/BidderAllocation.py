@@ -8,7 +8,7 @@ from tqdm import tqdm
 from scipy.special import gamma, digamma
 
 from Models import *
-
+import copy
 
 class Allocator:
     """ Base class for an allocator """
@@ -51,10 +51,7 @@ class NeuralAllocator(Allocator):
                 self.net = NeuralRegression2(context_dim+self.feature_dim, latent_dim).to(self.device)
                 self.eps = eps
         else:
-            if num_layers==1:
-                self.net = BayesianNeuralRegression(context_dim+self.feature_dim, latent_dim, prior_var).to(self.device)
-            else:
-                self.net = BayesianNeuralRegression2(context_dim+self.feature_dim, latent_dim, prior_var).to(self.device)
+            self.net = BayesianNeuralRegression(context_dim+self.feature_dim, latent_dim, prior_var).to(self.device)
         self.count = 0
         self.lr = lr
         self.batch_size = batch_size
@@ -100,39 +97,7 @@ class NeuralAllocator(Allocator):
             return
 
         self.net.train()
-        # batch_size = min(N, self.batch_size)
-        batch_size = N
-
-        # index_per_item = {}
-        # num_selection = np.zeros((self.K,))
-        # for k in range(self.K):
-        #     index_per_item[k] = items==k
-        #     num_selection[k] = int(np.sum(index_per_item[k]))
-
-        # batch_size = min(N, self.batch_size)
-        # self.net.train()
-        # for epoch in range(int(self.num_epochs)):
-        #     indices = []
-        #     for k in range(self.K):
-        #         temp_indices = np.arange(N)[index_per_item[k]]
-        #         if len(temp_indices)==0:
-        #             continue
-        #         indices.append(self.rng.choice(temp_indices, size=int(np.ceil(N/self.K)), replace=True))
-        #     indices = np.concatenate(indices)
-        #     shuffled_ind = self.rng.choice(indices, size=len(indices), replace=False)
-        #     epoch_loss = 0
-        #     for i in range(int(len(shuffled_ind)/batch_size)):
-        #         self.optimizer.zero_grad()
-        #         ind = shuffled_ind[i*batch_size:(i+1)*batch_size]
-        #         X_ = X[ind]
-        #         y_ = y[ind]
-        #         if self.mode=='Epsilon-greedy':
-        #             loss = self.net.loss(self.net(X_).squeeze(), y_)
-        #         else:
-        #             loss = self.net.loss(self.net(X_).squeeze(), y_, N)
-        #         loss.backward()
-        #         self.optimizer.step()
-        #         epoch_loss += loss.item()
+        batch_size = min(N, self.batch_size)
 
         for epoch in range(int(self.num_epochs)):
             shuffled_ind = self.rng.choice(N, size=N, replace=False)
@@ -161,7 +126,7 @@ class NeuralAllocator(Allocator):
             return
 
         self.net.train()
-        batch_size = N
+        batch_size = min(N, self.batch_size)
         for epoch in range(int(self.num_epochs)):
             shuffled_ind = self.rng.choice(N, size=N, replace=False)
             epoch_loss = 0
@@ -197,13 +162,16 @@ class NeuralAllocator(Allocator):
             return np.array([0])
     
     def copy_param(self, ref):
-        self.net.linear1.weight.data = ref.net.linear1.weight.clone().detach()
-        self.net.linear1.bias.data = ref.net.linear1.bias.clone().detach()
-        if isinstance(self.net, NeuralRegression2):
-            self.net.linear2.weight.data = ref.net.linear2.weight.clone().detach()
-            self.net.linear2.bias.data = ref.net.linear2.bias.clone().detach()
-        self.net.head.weight.data = ref.net.head.weight.clone().detach()
-        self.net.head.bias.data = ref.net.head.bias.clone().detach()
+        if self.mode=='Epsilon-greedy':
+            self.net.linear1.weight.data = ref.net.linear1.weight.clone().detach()
+            self.net.linear1.bias.data = ref.net.linear1.bias.clone().detach()
+            if isinstance(self.net, NeuralRegression2):
+                self.net.linear2.weight.data = ref.net.linear2.weight.clone().detach()
+                self.net.linear2.bias.data = ref.net.linear2.bias.clone().detach()
+            self.net.head.weight.data = ref.net.head.weight.clone().detach()
+            self.net.head.bias.data = ref.net.head.bias.clone().detach()
+        else:
+            self.net = copy.deepcopy(ref.net)
 
 class LinearAllocator(Allocator):
     def __init__(self, rng, context_dim, mode, c=0.0, eps=0.1):

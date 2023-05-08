@@ -13,7 +13,7 @@
       }
     },
     {
-      "name": "Neural-eps(0.0)",
+      "name": "Neural-eps-M(0.1)",
       "num_copies": 1,
       "num_items": 10,
         "allocator": {
@@ -28,7 +28,7 @@
             "latent_dim": 128,
             "num_items": 10,
             "mode": "\"Epsilon-greedy\"",
-            "eps": 0.0
+            "eps": 0.1
                     }
         },
         "bidder": {
@@ -43,5 +43,5 @@
       },
       "memory": "inf"
     }],
-    "output_dir": "results/Neural-eps/"
+    "output_dir": "results/Neural-eps-M/"
   }
