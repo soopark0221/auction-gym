@@ -627,7 +627,7 @@ class OracleBidder(Bidder):
             self.b = self.b[-memory:]
 
 class DefaultBidder(Bidder):
-    def __init__(self, rng, lr, context_dim, optimism_scale=1.0, noise=0.0, eq_winning_rate=1.0, overbidding_factor=0.0, overbidding_steps=1e4):
+    def __init__(self, rng, lr, context_dim, optimism_scale=1.0, noise=0.0, eq_winning_rate=1.0, overbidding_factor=0.0, pessimism_ratio=0.1, overbidding_steps=1e4):
         super().__init__(rng)
         self.lr = lr
         self.context_dim = context_dim
@@ -643,6 +643,7 @@ class DefaultBidder(Bidder):
         self.optimism_scale = optimism_scale
         self.eq_winning_rate = eq_winning_rate
         self.overbidding_factor = overbidding_factor
+        self.pessimism_ratio = pessimism_ratio
         self.overbidding_steps = overbidding_steps
     
     def initialize(self, item_values):
@@ -686,11 +687,10 @@ class DefaultBidder(Bidder):
         total_count = (won_count + lost_count) / np.sum(context**2)
 
         # optimism = self.optimism_scale * np.log((self.eq_winning_rate*lost_count+1e-6)/(won_count+1e-6))**3 * np.exp(-1e-3 * total_count)
-        optimism = self.optimism_scale * np.exp(-total_count/self.overbidding_steps)
-        optimistic_value = value * (mean_CTR + optimism * uncertainty)
+        optimistic_value = value * (mean_CTR + self.optimism_scale * uncertainty)
 
         # induce overbidding to collect data
-        if self.rng.uniform(0,1) < 0.9:
+        if self.overbidding_factor == 0.0 or self.rng.uniform(0,1) > self.pessimism_ratio:
             estimated_utility = prob_win * (optimistic_value - b_grid)
             bid = b_grid[np.argmax(estimated_utility)]
             bid += self.overbidding_factor * value * (0.1 * np.log((self.eq_winning_rate*lost_count+1e-6)/(won_count+1e-6))**2 + np.sqrt(1/(won_count+1e-2))) * np.exp(-total_count/self.overbidding_steps)

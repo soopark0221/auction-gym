@@ -47,10 +47,9 @@ class Agent:
     def should_explore(self):
         if isinstance(self.bidder, OracleBidder) or self.random_bidding_mode=='None':
             return False
-        if (self.allocator.mode=='TS' or self.allocator.mode=='UCB') and self.use_optimistic_value:
-            return self.clock%self.update_interval < \
-            self.init_num_random_bidding/np.power(self.decay_factor, int(self.clock/self.update_interval))/4
         else:
+            # p = self.init_num_random_bidding / np.power(self.decay_factor, int(self.clock/self.update_interval)) / self.update_interval
+            # return self.rng.uniform(0,1) < p
             return self.clock%self.update_interval < \
                 self.init_num_random_bidding/np.power(self.decay_factor, int(self.clock/self.update_interval))
 
@@ -68,11 +67,7 @@ class Agent:
                 # best_item = np.argmax(self.item_values * (estim_CTRs + self.allocator.c * uncertainty))
 
         elif not isinstance(self.allocator, OracleAllocator) and self.allocator.mode=='TS':
-            estim_CTRs = self.allocator.estimate_CTR(context, TS=True)
-            TS_CTR = []
-            for i in range(5):
-                TS_CTR.append(self.allocator.estimate_CTR(context, TS=True).reshape(-1))
-            TS_CTR = np.stack(TS_CTR)
+            estim_CTRs, uncertainty = self.allocator.estimate_CTR(context, TS=True)
             if isinstance(self.allocator, LogisticAllocatorM):
                 best_item = np.argmax(self.item_values * estim_CTRs)
             else:
@@ -82,7 +77,6 @@ class Agent:
                 best_item = np.argmax(self.item_values * estim_CTRs + self.bonus_factor * bonus)
                 # best_item = np.argmax(self.item_values * estim_CTRs)
             estim_CTRs = self.allocator.estimate_CTR(context)
-            uncertainty = np.std(TS_CTR, axis=0)
 
         else:
             estim_CTRs = self.allocator.estimate_CTR(context)
@@ -101,10 +95,7 @@ class Agent:
                 best_item = self.rng.choice(self.num_items, 1).item()
 
         if not isinstance(self.allocator, OracleAllocator) and (self.allocator.mode=='UCB' or self.allocator.mode=='TS'):
-            if self.clock < 0:
-                best_item = self.rng.choice(self.num_items, 1).item()
-            return best_item, estim_CTRs[best_item], uncertainty[best_item]
-            
+            return best_item, estim_CTRs[best_item], uncertainty[best_item]  
         else:
             return best_item, estim_CTRs[best_item], uncertainty
 
@@ -116,14 +107,17 @@ class Agent:
         # Sample value for this item
         value = self.item_values[best_item]
 
-        if isinstance(self.allocator, OracleAllocator):
-            context =context[:self.context_dim]
+        if not isinstance(self.allocator, OracleAllocator):
+            context = context[:self.context_dim]
 
         if isinstance(self.bidder, OracleBidder):
-            # todo: modify oraclebidder
-            raise NotImplementedError
             bid = self.bidder.bid(value, estimated_CTR, prob_win, b_grid)
-        elif not isinstance(self.allocator, OracleAllocator) and self.should_explore():
+        elif not isinstance(self.allocator, OracleAllocator):
+            bid, optimistic_CTR = self.bidder.bid(value, context, estimated_CTR, uncertainty)
+        else:
+            bid = self.bidder.bid(value, context, estimated_CTR)
+        
+        if not isinstance(self.allocator, OracleAllocator) and self.should_explore():
             if self.random_bidding_mode=='uniform':
                 bid = self.rng.uniform(0, value*1.5)
             elif self.random_bidding_mode=='overbidding-uniform':
@@ -134,11 +128,6 @@ class Agent:
                 bid = np.maximum(bid, 0)
             if not isinstance(self.bidder, TruthfulBidder):
                 self.bidder.b.append(bid)
-        else:
-            if not isinstance(self.allocator, OracleAllocator):
-                bid, optimistic_CTR = self.bidder.bid(value, context, estimated_CTR, uncertainty)
-            else:
-                bid = self.bidder.bid(value, context, estimated_CTR)
 
         # Log what we know so far
         self.logs.append(ImpressionOpportunity(context=context,

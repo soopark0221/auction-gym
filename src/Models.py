@@ -453,7 +453,7 @@ class LogisticRegressionS(nn.Module):
         X = torch.Tensor(contexts).to(self.device)
         y = torch.Tensor(outcomes).to(self.device)
 
-        epochs = 100
+        epochs = 1000
         optimizer = torch.optim.Adam(self.parameters(), lr=self.lr, amsgrad=True)
 
         for epoch in range(int(epochs)):
@@ -486,8 +486,9 @@ class LogisticRegressionS(nn.Module):
         with torch.no_grad():
             if UCB:
                 bound = self.c * torch.sqrt(torch.sum((X @ self.S) * X, dim=1, keepdim=True))
-                U = torch.sigmoid(X @ self.m.T + bound)
-                return U.numpy(force=True).reshape(-1)
+                U = torch.sigmoid(X @ self.m.T + bound).numpy(force=True).reshape(-1)
+                mean = torch.sigmoid(X @ self.m.T).numpy(force=True).reshape(-1)
+                return mean, U-mean
             elif TS:
                 m = self.m.numpy(force=True)
                 m += self.nu * self.sqrt_S @ self.rng.normal(0,1,self.d)
@@ -506,22 +507,22 @@ class BayesianNeuralRegression(nn.Module):
         self.d = input_dim
         self.h = latent_dim
         self.prior_var = prior_var
-        self.linear1 = BayesianLinear(self.d, self.h)
-        self.linear2 = BayesianLinear(self.h, 1)
+        self.feature = BayesianLinear(self.d, self.h)
+        self.head = BayesianLinear(self.h, 1)
         self.criterion = nn.BCELoss()
         self.eval()
 
     def forward(self, x, MAP=False):
-        x = torch.relu(self.linear1(x, not MAP))
-        return torch.sigmoid(self.linear2(x, not MAP))
+        x = torch.relu(self.feature(x, not MAP))
+        return torch.sigmoid(self.head(x, not MAP))
 
     def loss(self, predictions, labels, N):
-        kl_div = self.linear1.KL_div(self.prior_var) + self.linear2.KL_div(self.prior_var)
+        kl_div = self.feature.KL_div(self.prior_var) + self.head.KL_div(self.prior_var)
         return self.criterion(predictions, labels) + kl_div/N
     
     def get_uncertainty(self):
-        uncertainties = [self.linear1.get_uncertainty(),
-                         self.linear2.get_uncertainty()]
+        uncertainties = [self.feature.get_uncertainty(),
+                         self.head.get_uncertainty()]
         return np.concatenate(uncertainties)
 
 class BayesianNeuralRegression2(nn.Module):
