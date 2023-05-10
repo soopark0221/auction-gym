@@ -61,10 +61,11 @@ def draw_features(num_auctions, rng, num_runs, context_dim, feature_dim, agent_c
 
         for agent_config in agent_configs:
             if "Competitor" in agent_config['name']:
-                temp = []
+                temp = [] # K x feature_dim
                 for k in range(agent_config['num_items']):
                     feature = rng.normal(0.0, 1.0, size=feature_dim)
                     temp.append(feature)
+                
                 competitor2items[agent_config['name']] = np.stack(temp)
                 competitor2item_values[agent_config['name']] = np.ones((agent_config['num_items'],))
             else:
@@ -78,18 +79,55 @@ def draw_features(num_auctions, rng, num_runs, context_dim, feature_dim, agent_c
             auction2items.append(np.stack(temp))
             auction2item_values.append(np.ones((target_agent['num_items'],)))
 
+
         run2auction2items[run] = auction2items
         run2auction2item_values[run] = auction2item_values
         run2competitors2items[run] = competitor2items
         run2competitors2item_values[run] = competitor2item_values
         run2bilinear_map[run] = rng.normal(0.0, 1.0, size=(context_dim, feature_dim))
-
+    #print(f'item features shape {np.array(run2auction2items[run]).shape}, {np.array(run2auction2item_values[run]).shape}, {np.array(run2competitors2items[run]).shape}, {np.array(run2competitors2item_values[run]).shape}, {np.array(run2bilinear_map[run]).shape}')
     return run2auction2items, run2auction2item_values, run2competitors2items, run2competitors2item_values, run2bilinear_map
 
 
+def draw_features2(num_auctions, rng, num_runs, context_dim, feature_dim, agent_configs):
+    run2auction2items = {}
+    run2auction2item_values = {}
+    run2competitors2items = {}
+    run2competitors2item_values = {}
+    run2bilinear_map = {}
+
+    for run in range(num_runs):
+        auction2items = []
+        auction2item_values = []
+        competitor2items = {}
+        competitor2item_values = {}
+        
+        for auction in range(num_auctions):
+            for agent_config in agent_configs:
+                temp = [] # K x feature_dim
+                for k in range(agent_config['num_items']):
+                    feature = rng.normal(0.0, 1.0, size=feature_dim)
+                    temp.append(feature)
+                if "Competitor" in agent_config['name']:
+                    competitor2items[agent_config['name']] = np.stack(temp)
+                    competitor2item_values[agent_config['name']] = np.ones((agent_config['num_items'],))
+                else:
+                    auction2items.append(np.stack(temp))
+                    auction2item_values.append(np.ones((target_agent['num_items'],)))
+
+
+        run2auction2items[run] = auction2items
+        run2auction2item_values[run] = auction2item_values
+        run2competitors2items[run] = competitor2items
+        run2competitors2item_values[run] = competitor2item_values
+        run2bilinear_map[run] = rng.normal(0.0, 1.0, size=(context_dim, feature_dim))
+    #print(f'item features shape {np.array(run2auction2items[run]).shape}, {np.array(run2auction2item_values[run]['Competitor-Truthful 1']).shape}, {np.array(run2competitors2items[run]['Competitor-Truthful 1']).shape}, {np.array(run2competitors2item_values[run]).shape}, {np.array(run2bilinear_map[run]).shape}')
+    return run2auction2items, run2auction2item_values, run2competitors2items, run2competitors2item_values, run2bilinear_map
+
+import random
 def instantiate_agents(rng, agent_configs, num_auctions, auction2items, auction2item_values,
                        competitors2items, competitors2item_values, obs_context_dim, update_interval, bilinear_map, random_bidding,
-                       bonus_factors, optimism_scales, eq_winning_rates, overbidding_factors, overbidding_steps):
+                       bonus_factors, optimism_scales):
     # set up agents acting in different auctions
     # competitors, which determines the probability of winning, are shared across auctions
     competitors = []
@@ -98,36 +136,30 @@ def instantiate_agents(rng, agent_configs, num_auctions, auction2items, auction2
             competitors.append(agent_config)
         else:
             target_agent = agent_config
-    
     # number of auctions must match the number of combinations of agent configurations
-    assert len(bonus_factors) * len(optimism_scales) * len(eq_winning_rates) * len(overbidding_factors) * len(overbidding_steps) == num_auctions
+    #assert len(bonus_factors) * len(optimism_scales) * len(eq_winning_rates) * len(overbidding_factors) * len(overbidding_steps) == num_auctions
 
     agents = []
-    i = 0
-    for bonus_factor in bonus_factors:
-        for optimism_scale in optimism_scales:
-            for eq_winning_rate in eq_winning_rates:
-                for overbidding_factor in overbidding_factors:
-                    for overbidding_step in overbidding_steps:
-                        allocator = eval(f"{target_agent['allocator']['type']}(rng=rng, item_features=auction2items[i]{parse_kwargs(target_agent['allocator']['kwargs'])})")
-                        bidder = eval(f"{target_agent['bidder']['type']}(rng=rng{parse_kwargs(target_agent['bidder']['kwargs'])})")
-                        bidder.optimism_scale = optimism_scale
-                        bidder.eq_winning_rate = eq_winning_rate
-                        bidder.overbidding_factor = overbidding_factor
-                        bidder.overbidding_steps = overbidding_step
-                        agents.append(Agent(rng=rng,
-                                            name=target_agent['name']+f" {i+1}",
-                                            item_features=auction2items[i],
-                                            item_values=auction2item_values[i],
-                                            allocator=allocator,
-                                            bidder=bidder,
-                                            context_dim = obs_context_dim,
-                                            update_interval=update_interval,
-                                            random_bidding = random_bidding,
-                                            memory=('inf' if 'memory' not in target_agent.keys() else target_agent['memory']),
-                                            bonus_factor=bonus_factor))
-                        i += 1
-        
+    #competitors = []
+    for i in range(num_auctions):
+        bonus_factor = random.choice(bonus_factors)
+        optimism_scale = random.choice(optimism_scales)
+ 
+        allocator = eval(f"{target_agent['allocator']['type']}(rng=rng, item_features=auction2items[i]{parse_kwargs(target_agent['allocator']['kwargs'])})")
+        bidder = eval(f"{target_agent['bidder']['type']}(rng=rng{parse_kwargs(target_agent['bidder']['kwargs'])})")
+        bidder.optimism_scale = optimism_scale
+        agents.append(Agent(rng=rng,
+                            name=target_agent['name']+f" {i+1}",
+                            item_features=auction2items[i],
+                            item_values=auction2item_values[i],
+                            allocator=allocator,
+                            bidder=bidder,
+                            context_dim = obs_context_dim,
+                            update_interval=update_interval,
+                            random_bidding = random_bidding,
+                            memory=('inf' if 'memory' not in target_agent.keys() else target_agent['memory']),
+                            bonus_factor=bonus_factor))
+
     competitors = [
         Agent(rng=rng,
               name=competitor['name'],
@@ -145,16 +177,12 @@ def instantiate_agents(rng, agent_configs, num_auctions, auction2items, auction2
     for i, competitor in enumerate(competitors):
         if isinstance(competitor.allocator, OracleAllocator):
             competitor.allocator.set_CTR_model(bilinear_map)
-        if isinstance(competitor.allocator, NeuralAllocator):
-            competitor.allocator.initialize(competitors2item_values[competitor['name']])
         try:
             competitor.bidder.initialize(competitors2item_values[competitor['name']])
         except:
             pass
     
     for i, agent in enumerate(agents):
-        if isinstance(agent.allocator, OracleAllocator):
-            agent.allocator.set_CTR_model(bilinear_map)
         if isinstance(agent.allocator, NeuralAllocator):
             if i==0:
                 agent.allocator.initialize(auctions2item_values[i])
@@ -170,6 +198,79 @@ def instantiate_agents(rng, agent_configs, num_auctions, auction2items, auction2
 
     return agents, competitors
 
+
+def instantiate_agents2(rng, agent_configs, num_auctions, auction2items, auction2item_values,
+                       competitors2items, competitors2item_values, obs_context_dim, update_interval, bilinear_map, random_bidding,
+                       bonus_factors, optimism_scales):
+    # set up agents acting in different auctions
+    # competitors, which determines the probability of winning, are shared across auctions
+    competitors = []
+    for agent_config in agent_configs:
+        if 'Competitor' in agent_config['name']:
+            competitors.append(agent_config)
+        else:
+            target_agent = agent_config
+    # number of auctions must match the number of combinations of agent configurations
+    #assert len(bonus_factors) * len(optimism_scales) * len(eq_winning_rates) * len(overbidding_factors) * len(overbidding_steps) == num_auctions
+
+    agents = []
+    competitors = []
+    for i in range(num_auctions):
+        bonus_factor = random.choice(bonus_factors)
+        optimism_scale = random.choice(optimism_scales)
+ 
+        allocator = eval(f"{target_agent['allocator']['type']}(rng=rng, item_features=auction2items[i]{parse_kwargs(target_agent['allocator']['kwargs'])})")
+        bidder = eval(f"{target_agent['bidder']['type']}(rng=rng{parse_kwargs(target_agent['bidder']['kwargs'])})")
+        bidder.optimism_scale = optimism_scale
+        agents.append(Agent(rng=rng,
+                            name=target_agent['name']+f" {i+1}",
+                            item_features=auction2items[i],
+                            item_values=auction2item_values[i],
+                            allocator=allocator,
+                            bidder=bidder,
+                            context_dim = obs_context_dim,
+                            update_interval=update_interval,
+                            random_bidding = random_bidding,
+                            memory=('inf' if 'memory' not in target_agent.keys() else target_agent['memory']),
+                            bonus_factor=bonus_factor))
+        comp = [
+            Agent(rng=rng,
+                name=competitor['name'],
+                item_features=competitors2items[competitor['name']][i],
+                item_values=competitors2item_values[competitor['name']][i],
+                allocator=eval(f"{competitor['allocator']['type']}(rng=rng, item_features=competitors2items[competitor['name']][i]{parse_kwargs(competitor['allocator']['kwargs'])})"),
+                bidder=eval(f"{competitor['bidder']['type']}(rng=rng{parse_kwargs(competitor['bidder']['kwargs'])})"),
+                context_dim = obs_context_dim,
+                update_interval=update_interval,
+                random_bidding = random_bidding,
+                memory=('inf' if 'memory' not in competitor.keys() else competitor['memory']))
+            for i, competitor in enumerate(competitors)
+        ]
+        competitors.append(comp)
+ 
+    for auctions in competitors:
+        for competitor in auctions:
+            competitor.allocator.set_CTR_model(bilinear_map)
+        try:
+            competitor.bidder.initialize(competitors2item_values[competitor['name']])
+        except:
+            pass
+
+    for i, agent in enumerate(agents):
+        if isinstance(agent.allocator, NeuralAllocator):
+            if i==0:
+                agent.allocator.initialize(auctions2item_values[i])
+            else:
+                agent.allocator.copy_param(agents[0].allocator)
+        try:
+            if i==0:
+                agent.bidder.initialize(auctions2item_values[i])
+            else:
+                agent.bidder.copy_param(agents[0].bidder)
+        except:
+            pass
+
+    return agents, competitors
 
 def instantiate_auction(rng, training_config, bilinear_map, agents2items, agents2item_values, agents, max_slots, context_dim, obs_context_dim, context_dist):
     return Auction(rng,
@@ -215,6 +316,8 @@ def simulation_run(run, auctions):
                 agents[j].allocator.copy_param(agents[0].allocator)
                 agents[j].bidder.copy_param(agents[0].bidder)
                 agents[j].truncate_memory()
+                agents[j].bidder.G_w = agents[0].bidder.G_w
+                agents[j].bidder.G_l = agents[0].bidder.G_l
             
         if i % int(record_interval/len(auctions)) == 0:
             net_utility_ = 0
@@ -265,7 +368,8 @@ def simulation_run(run, auctions):
             auction_revenue.append(auction_revenue_)
             winrate_optimal.append(winrate_optimal_/len(auctions))
             utility_optimal.append(utility_optimal_)
-
+            for agent in agents:
+                agent.move_index()
 
 def plot_winrate(agent):
     global auction, obs_context_dim
@@ -422,7 +526,6 @@ def measure2df(run2measure, measure_name):
             df_rows[measure_name].append(measure)
     return pd.DataFrame(df_rows)
 
-
 def plot_measure(run2measure, measure_name, hue=None, optimal=None):
     # Generate DataFrame for Seaborn
     if type(run2measure) != pd.DataFrame:
@@ -501,7 +604,7 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    with open('config/training_multiauction.json') as f:
+    with open('config/training_multiauction_simple.json') as f:
         training_config = json.load(f)        
 
     # Set up Random Number Generator
@@ -524,10 +627,10 @@ if __name__ == '__main__':
 
     bonus_factors = training_config['bonus_factor']
     optimism_scales = training_config['optimism_scale']
-    eq_winning_rates = training_config['eq_winning_rate']
-    overbidding_factors = training_config['overbidding_factor']
-    overbidding_steps = training_config['overbidding_steps']
-    overbidding_steps = [int(steps/num_auctions) for steps in overbidding_steps]
+    #eq_winning_rates = training_config['eq_winning_rate']
+    #overbidding_factors = training_config['overbidding_factor']
+    #overbidding_steps = training_config['overbidding_steps']
+    #overbidding_steps = [int(steps/num_auctions) for steps in overbidding_steps]
 
     os.environ["CUDA_VISIBLE_DEVICES"]= args.cuda
     print("running in {}".format('cuda' if torch.cuda.is_available() else 'cpu'))
@@ -539,7 +642,7 @@ if __name__ == '__main__':
         os.makedirs(output_dir)
     
     shutil.copy(args.config, os.path.join(output_dir, 'agent_config.json'))
-    shutil.copy('config/training_multiauction.json', os.path.join(output_dir, 'training_config.json'))
+    shutil.copy('config/training_multiauction_simple.json', os.path.join(output_dir, 'training_config.json'))
 
     # Plotting config
     FIGSIZE = (8, 5)
@@ -576,15 +679,21 @@ if __name__ == '__main__':
         bilinear_map = run2bilinear_map[run]
         auctions2items = run2auction2items[run]
         auctions2item_values = run2auction2item_values[run]
+        #agents, competitors = instantiate_agents(rng, agent_configs, num_auctions, run2auction2items[run], run2auction2item_values[run],
+        #               run2competitors2items[run], run2competitors2item_values[run], obs_context_dim, update_interval, bilinear_map, random_bidding,
+        #               bonus_factors, optimism_scales, eq_winning_rates, overbidding_factors, overbidding_steps)
+
         agents, competitors = instantiate_agents(rng, agent_configs, num_auctions, run2auction2items[run], run2auction2item_values[run],
                        run2competitors2items[run], run2competitors2item_values[run], obs_context_dim, update_interval, bilinear_map, random_bidding,
-                       bonus_factors, optimism_scales, eq_winning_rates, overbidding_factors, overbidding_steps)
+                       bonus_factors, optimism_scales)
         
+
         auctions = []
         for i in range(num_auctions):
             agents_for_auction = [agents[i], *competitors]
+            # items, values
             items_for_auction = {competitor.name : competitor.items for competitor in competitors}
-            items_for_auction[agents[i].name] = agents[i].items
+            items_for_auction[agents[i].name] = agents[i].items # k x feature dim
             values_for_auction = {competitor.name : competitor.item_values for competitor in competitors}
             values_for_auction[agents[i].name] = agents[i].item_values
             auction = instantiate_auction(

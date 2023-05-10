@@ -162,6 +162,7 @@ class NeuralAllocator(Allocator):
             return np.array([0])
     
     def copy_param(self, ref):
+        '''
         if self.mode=='Epsilon-greedy':
             self.net.linear1.weight.data = ref.net.linear1.weight.clone().detach()
             self.net.linear1.bias.data = ref.net.linear1.bias.clone().detach()
@@ -171,7 +172,8 @@ class NeuralAllocator(Allocator):
             self.net.head.weight.data = ref.net.head.weight.clone().detach()
             self.net.head.bias.data = ref.net.head.bias.clone().detach()
         else:
-            self.net = copy.deepcopy(ref.net)
+        '''
+        self.net = copy.deepcopy(ref.net)
 
 class LinearAllocator(Allocator):
     def __init__(self, rng, context_dim, mode, c=0.0, eps=0.1):
