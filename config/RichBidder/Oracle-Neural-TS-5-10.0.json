@@ -13,10 +13,10 @@
       }
     },
     {
-      "name": "Neural-eps(0.1)",
+      "name": "Neural-TS(10.0)",
       "num_copies": 1,
       "num_items": 10,
-      "bonus_factor": 2.0,
+      "bonus_factor": 0.0,
         "allocator": {
           "type": "NeuralAllocator",
           "kwargs": {
@@ -28,23 +28,17 @@
             "context_dim": 5,
             "latent_dim": 128,
             "num_items": 10,
-            "mode": "\"Epsilon-greedy\"",
-            "eps": 0.1
+            "mode": "\"TS\"",
+            "prior_var": 10.0,
+            "num_samples": 5
           }
         },
         "bidder": {
-          "type": "DefaultBidder",
+          "type": "RichBidder",
           "kwargs": {
-            "lr": 1e-3,
-            "context_dim": 5,
-            "optimism_scale":1.0,
-            "overbidding_factor":5.0,
-            "eq_winning_rate":1.0,
-            "overbidding_steps":1e4,
-            "noise": 0.0
           }
       },
       "memory": "inf"
     }],
-    "output_dir": "results/Neural-eps/"
+    "output_dir": "results/Rich-Neural-TS/"
   }

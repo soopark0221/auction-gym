@@ -13,38 +13,32 @@
       }
     },
     {
-      "name": "Neural-eps(0.1)",
+      "name": "NeuralBoot-UCB(5.0)",
       "num_copies": 1,
       "num_items": 10,
-      "bonus_factor": 2.0,
+      "bonus_factor": 0.0,
         "allocator": {
-          "type": "NeuralAllocator",
+          "type": "NeuralBootstrapAllocator",
           "kwargs": {
             "lr": 1e-3,
             "batch_size": 512,
             "weight_decay": 1e-6,
-            "num_layers": 1,
             "num_epochs": 50,
             "context_dim": 5,
             "latent_dim": 128,
             "num_items": 10,
-            "mode": "\"Epsilon-greedy\"",
-            "eps": 0.1
+            "num_heads": 5,
+            "bootstrap": 0.8,
+            "mode": "\"UCB\"",
+            "c": 5.0
           }
         },
         "bidder": {
-          "type": "DefaultBidder",
+          "type": "RichBidder",
           "kwargs": {
-            "lr": 1e-3,
-            "context_dim": 5,
-            "optimism_scale":1.0,
-            "overbidding_factor":5.0,
-            "eq_winning_rate":1.0,
-            "overbidding_steps":1e4,
-            "noise": 0.0
           }
       },
       "memory": "inf"
     }],
-    "output_dir": "results/Neural-eps/"
+    "output_dir": "results/Rich-NeuralBoot-UCB/"
   }
