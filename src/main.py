@@ -83,13 +83,16 @@ def instantiate_agents(rng, agent_configs, agents2item_values, agents2item_featu
               bidder=eval(f"{agent_config['bidder']['type']}(rng=rng{parse_kwargs(agent_config['bidder']['kwargs'])})"),
               context_dim = obs_context_dim,
               update_interval=update_interval,
-              random_bidding = random_bidding,
+              random_bidding = ('None' if 'Competitor' in agent_config['name'] else random_bidding),
               memory=('inf' if 'memory' not in agent_config.keys() else agent_config['memory']),
-              bonus_factor=(agent_config['bonus_factor'] if 'bonus_factor' in agent_config.keys() else 1.0))
+              bonus_factor=(agent_config['bonus_factor'] if 'bonus_factor' in agent_config.keys() else 0.5))
         for agent_config in agent_configs
     ]
 
     for agent in agents:
+        agent.explore_then_commit = explore_then_commit
+        if (not 'Competitor' in agent.name) and agent.allocator.mode=='UCB':
+            assert agent.allocator.c == agent.bidder.optimism_scale
         if isinstance(agent.allocator, OracleAllocator):
             agent.allocator.set_CTR_model(bilinear_map)
         if isinstance(agent.allocator, NeuralAllocator):
@@ -362,6 +365,7 @@ if __name__ == '__main__':
     # Set up Random Number Generator
     rng = np.random.default_rng(training_config['random_seed'])
     np.random.seed(training_config['random_seed'])
+    torch.manual_seed(training_config['random_seed'])
 
     num_runs = training_config['num_runs']
     num_iter  = training_config['num_iter']
@@ -378,14 +382,32 @@ if __name__ == '__main__':
     obs_context_dim = training_config['obs_context_dim']
     feature_dim = training_config['feature_dim']
     context_dist = training_config['context_distribution']
+    explore_then_commit = training_config['explore_then_commit']
     random_bidding = training_config['random_bidding']
+    if 'None' in random_bidding:
+        init_random_bidding = 0.0
+        decay = 1.0
+    else:
+        split = random_bidding.split()
+        init_random_bidding = split[1]
+        decay = split[2]
 
     os.environ["CUDA_VISIBLE_DEVICES"]= args.cuda
     print("running in {}".format('cuda' if torch.cuda.is_available() else 'cpu'))
 
     # Parse configuration file
     agent_configs, output_dir = parse_agent_config(args.config)
-    output_dir = output_dir + time.strftime('%y%m%d-%H%M%S')
+    for a in agent_configs:
+        if not 'Competitor' in a['name']:
+            bonus_factor = (a['bonus_factor'] if 'bonus_factor' in a.keys() else 0.0)
+            if a['bidder']['type']!='OracleBidder' and a['bidder']['type']!='RichBidder':
+                optimism_scale, overbidding_factor, pessimism_ratio, overbidding_steps = \
+                    a['bidder']['kwargs']['optimism_scale'], a['bidder']['kwargs']['overbidding_factor'], a['bidder']['kwargs']['pessimism_ratio'], a['bidder']['kwargs']['overbidding_steps']
+            else:
+                optimism_scale, overbidding_factor, pessimism_ratio, overbidding_steps = 0.0, 0.0, 0.0, 0
+            agent_name = a['name'].split()[0]
+
+    output_dir = output_dir + time.strftime('%y%m%d-%H%M%S') + f"{agent_name}_{bonus_factor}_{optimism_scale}_{init_random_bidding}_{decay}_{overbidding_factor}_{pessimism_ratio}"
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
     
@@ -500,27 +522,15 @@ if __name__ == '__main__':
         run2matrix_error[run] = matrix_error
         run2item_selection[run] = item_selection
 
-    for a in agent_configs:
-        if not 'Competitor' in a['name']:
-            bonus_factor = a['bonus_factor']
-            if 'None' in random_bidding:
-                optimism_scale, overbidding_factor, eq_winning_rate, overbidding_steps = \
-                a['bidder']['kwargs']['optimism_scale'], a['bidder']['kwargs']['overbidding_factor'], a['bidder']['kwargs']['eq_winning_rate'], a['bidder']['kwargs']['overbidding_steps']
-            else:
-                split = random_bidding.split()
-                init_random_bidding = split[1]
-                decay = split[2]
-            agent_name = a['name'].split()[0]
 
     plot_vector_measure(run2bidding_error, 'Bidding Error')
     plot_vector_measure(run2bidding_optimal, 'Bidding of Optimal Agent')
     optimal_selection_df = plot_measure(run2optimal_selection_rate, 'Optimal Selection Rate')
+
     optimal_selection_df['bonus_factor'] = bonus_factor
-    if 'None' in random_bidding:
-        optimal_selection_df['optimism_scale'], optimal_selection_df['overbidding_factor'], optimal_selection_df['eq_winning_rate'], optimal_selection_df['overbidding_steps'] = \
-        [optimism_scale, overbidding_factor, eq_winning_rate, overbidding_steps]
-    else:
-        optimal_selection_df['init_random_bidding'], optimal_selection_df['decay'] = init_random_bidding, decay
+    optimal_selection_df['optimism_scale'], optimal_selection_df['overbidding_factor'], optimal_selection_df['pessimism_ratio'] = \
+        [optimism_scale, overbidding_factor, pessimism_ratio]
+    optimal_selection_df['init_random_bidding'], optimal_selection_df['decay'] = init_random_bidding, decay
     optimal_selection_df.to_csv(f'{output_dir}/{agent_name}_optimal_selection_rate.csv', index=False)
     
     utility_df = measure_per_agent2df(run2agent2net_utility, 'Utility')
@@ -531,11 +541,9 @@ if __name__ == '__main__':
     plot_measure_per_agent(utility_df, 'Utility')
     plot_measure_per_agent(utility_df, 'Utility (Cumulative)')
     utility_df['bonus_factor'] = bonus_factor
-    if 'None' in random_bidding:
-        utility_df['optimism_scale'], utility_df['overbidding_factor'], utility_df['eq_winning_rate'], utility_df['overbidding_steps'] = \
-        [optimism_scale, overbidding_factor, eq_winning_rate, overbidding_steps]
-    else:
-        utility_df['init_random_bidding'], utility_df['decay'] = init_random_bidding, decay
+    utility_df['optimism_scale'], utility_df['overbidding_factor'], utility_df['pessimism_ratio']= \
+        [optimism_scale, overbidding_factor, pessimism_ratio]
+    utility_df['init_random_bidding'], utility_df['decay'] = init_random_bidding, decay
     utility_df.to_csv(f'{output_dir}/{agent_name}_net_utility.csv', index=False)
 
     plot_measure_per_agent(run2agent2best_expected_value, 'Best Expected Value')
@@ -558,23 +566,19 @@ if __name__ == '__main__':
     winning_prob_df = pd.concat([winning_prob_df, optimal_winning_prob_df])
     plot_measure_per_agent(winning_prob_df, 'Probability of Winning')
     winning_prob_df['bonus_factor'] = bonus_factor
-    if 'None' in random_bidding:
-        winning_prob_df['optimism_scale'], winning_prob_df['overbidding_factor'], winning_prob_df['eq_winning_rate'], winning_prob_df['overbidding_steps'] = \
-        [optimism_scale, overbidding_factor, eq_winning_rate, overbidding_steps]
-    else:
-        winning_prob_df['init_random_bidding'], winning_prob_df['decay'] = init_random_bidding, decay
+    winning_prob_df['optimism_scale'], winning_prob_df['overbidding_factor'], winning_prob_df['pessimism_ratio'] = \
+        [optimism_scale, overbidding_factor, pessimism_ratio]
+    winning_prob_df['init_random_bidding'], winning_prob_df['decay'] = init_random_bidding, decay
     winning_prob_df.to_csv(f'{output_dir}/{agent_name}_winning_probability.csv', index=False)
 
-    plot_vector_measure(run2agent2CTR, 'CTR Value')
+    # plot_vector_measure(run2agent2CTR, 'CTR Value')
     # CTR_df.to_csv(f'{output_dir}/CTR.csv', index=False)
 
     CTR_RMSE_df = plot_measure_per_agent(run2agent2CTR_RMSE, 'CTR RMSE')
     CTR_RMSE_df['bonus_factor'] = bonus_factor
-    if 'None' in random_bidding:
-        CTR_RMSE_df['optimism_scale'], CTR_RMSE_df['overbidding_factor'], CTR_RMSE_df['eq_winning_rate'], CTR_RMSE_df['overbidding_steps'] = \
-        [optimism_scale, overbidding_factor, eq_winning_rate, overbidding_steps]
-    else:
-        CTR_RMSE_df['init_random_bidding'], CTR_RMSE_df['decay'] = init_random_bidding, decay
+    CTR_RMSE_df['optimism_scale'], CTR_RMSE_df['overbidding_factor'], CTR_RMSE_df['pessimism_ratio'] = \
+        [optimism_scale, overbidding_factor, pessimism_ratio]
+    CTR_RMSE_df['init_random_bidding'], CTR_RMSE_df['decay'] = init_random_bidding, decay
     CTR_RMSE_df.to_csv(f'{output_dir}/{agent_name}_CTR_RMSE.csv', index=False)
 
     CTR_df = plot_measure_per_agent(run2agent2CTR_bias, 'CTR Bias', optimal=1.0)
@@ -595,21 +599,11 @@ if __name__ == '__main__':
     regret_df['Regret'] = regret_df.groupby(['Run'])[f'Regret({record_interval}steps)'].cumsum()
     plot_measure(regret_df, 'Regret')
     regret_df['bonus_factor'] = bonus_factor
-    if 'None' in random_bidding:
-        regret_df['overbidding_factor'], regret_df['eq_winning_rate'], regret_df['overbidding_steps'] = \
-        [optimism_scale, overbidding_factor, eq_winning_rate, overbidding_steps]
-    else:
-        regret_df['init_random_bidding'], regret_df['decay'] = init_random_bidding, decay
+    regret_df['optimism_scale'], regret_df['overbidding_factor'], regret_df['pessimism_ratio'] = \
+        [optimism_scale, overbidding_factor, pessimism_ratio]
+    regret_df['init_random_bidding'], regret_df['decay'] = init_random_bidding, decay
     regret_df.to_csv(f'{output_dir}/{agent_name}_regret.csv', index=False)
     
-
-    # plot_winrate_estimation(run2winrate_estimation)
-
-    # net_utility_df_overall = utility_df.groupby(['Run', 'Step'])['Net Utility'].sum().reset_index().rename(columns={'Net Utility': 'Social Surplus'})
-    # plot_measure(net_utility_df_overall, 'Social Surplus')
-
-    matrix_error_df = measure2df(run2matrix_error, 'Matrix L2 Error')
-    plot_measure(matrix_error_df, 'Matrix L2 Error')
 
     df_rows = {'Run': [], 'Step': [], 'Item': [], 'Selection': []}
     for run, list in run2item_selection.items():

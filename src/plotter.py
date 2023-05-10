@@ -11,10 +11,11 @@ import json
 data_path = 'results/results_to_plot'
 output_dir = 'results/plots'
 experiment = '300 agents'
-agent = 'multi'
+agent = 'single'
 Bid = ''
 FIGSIZE = (8, 5)
 FONTSIZE = 14
+record_interval = 500
 
 def plot_measure_overall(df, measure_name):
     df = df[~df['Agent'].str.startswith('Competitor')]
@@ -179,47 +180,29 @@ def avg_regret():
     plt.tight_layout()
     plt.savefig(f"{output_dir}/{experiment}_AVG_Regret.png", bbox_inches='tight')
 
-def cum_regret():
-    global experiment,data_path, agent
-    subpath = 'regret'
-    data_path1 = path.join(data_path, subpath)
-    methods = [f'{Bid}Eps_0.0_m', f'{Bid}Eps_0.1_m', f'{Bid}TS_1.0_m', f'{Bid}UCB_10.0_m']
-    #methods = ['SB_Eps_0.0', 'SB_Eps_0.1', 'SB_TS_1.0', 'SB_UCB_10.0']
-    #methods = [f'Logistic_Eps0.0_{Bid}', f'Logistic_Eps0.1_{Bid}', f'Logistic_TS0.1_{Bid}', f'Logistic_TS1.0_{Bid}', f'Logistic_UCB0.1_{Bid}',f'Logistic_UCB1.0_{Bid}']
-    #methods = ['Logistic_Eps0.0_20', 'Logistic_Eps0.1_20', 'Logistic_Eps0.0_50', 'Logistic_Eps0.1_50']
-    file_list = [path.join(data_path1, method+'.csv') for method in methods]
+def regret():
+    global regret_df
 
-    df_list = []
+    df = regret_df
 
     fig, axes = plt.subplots(figsize=FIGSIZE)
 
-    for setting, file in zip(methods, file_list):
-        df = pd.read_csv(file)
-        df = df.reset_index()
-        df['methods'] = setting
-        if agent == 'single':
-            df['Step'] = df['Step']*300
-        df_list.append(df)
-
-    df = pd.concat(df_list)
-    df = df.reset_index()
-
     sns.lineplot(data=df, x="Step", y="Regret", ax=axes, hue='methods')
 
-    plt.title(f'Cumulative Regret Over Time: {experiment}', fontsize=FONTSIZE + 2)
-    plt.ylabel('Cumulative Regret', fontsize=FONTSIZE)
+    plt.title(f'Regret Over Time: {experiment}', fontsize=FONTSIZE + 2)
+    plt.ylabel('Regret', fontsize=FONTSIZE)
 
     if agent == 'multi':
         plt.xlabel('steps per agent', fontsize=FONTSIZE)
     else:
-        plt.xlabel('steps', fontsize=FONTSIZE)
+        plt.xlabel(f'{record_interval} steps', fontsize=FONTSIZE)
 
     plt.xticks(fontsize=FONTSIZE - 2)
     plt.yticks(fontsize=FONTSIZE - 2)
     plt.grid(True, 'major', 'y', ls='--', lw=.5, c='k', alpha=.3)
     plt.legend(loc='lower right', fontsize=FONTSIZE-4)
     plt.tight_layout()
-    plt.savefig(f"{output_dir}/{experiment}_Cum_Regret.png", bbox_inches='tight')
+    plt.savefig(f"{output_dir}/{experiment}_Regret.png", bbox_inches='tight')
 
 
 def regret_ex():
@@ -261,31 +244,14 @@ def regret_ex():
 
 
 
-def optimal():
-    global experiment,data_path,agent
-    subpath = 'optimalselection'
-    data_path1 = path.join(data_path, subpath)
-    methods = [f'{Bid}Eps_0.0_m', f'{Bid}Eps_0.1_m', f'{Bid}TS_1.0_m', f'{Bid}UCB_10.0_m']
-    #methods = [f'Logistic_Eps0.0_{Bid}', f'Logistic_Eps0.1_{Bid}', f'Logistic_TS0.1_{Bid}', f'Logistic_TS1.0_{Bid}', f'Logistic_UCB0.1_{Bid}',f'Logistic_UCB1.0_{Bid}']
-    #methods = ['Logistic_Eps0.0_20', 'Logistic_Eps0.1_20', 'Logistic_Eps0.0_50', 'Logistic_Eps0.1_50']
-    file_list = [path.join(data_path1, method+'.csv') for method in methods]
+def optimal_selection_rate():
+    global optimal_selection_df
 
-    df_list = []
+    df = optimal_selection_df
 
     fig, axes = plt.subplots(figsize=FIGSIZE)
 
-    for setting, file in zip(methods, file_list):
-        df = pd.read_csv(file)
-        #df = df.reset_index()
-        df['methods'] = setting
-        if agent == 'single':
-            df['Step'] = df['Step']*300
-        df_list.append(df)
-
-    df = pd.concat(df_list)
-    df = df.reset_index()
-
-    sns.lineplot(data=df, x="Step", y="Optimal Selection Rate", ax=axes, hue='methods')
+    sns.lineplot(data=df, x="Step", y="Optimal Selection Rate", ax=axes, hue='Agent')
 
     plt.title(f'Selection Rate of Optimal Ads Over Time: {experiment}', fontsize=FONTSIZE + 2)
     plt.ylabel('Rate', fontsize=FONTSIZE)
@@ -349,34 +315,26 @@ def probw():
 
 
 
-def util():
-    global experiment,data_path
-    subpath = 'utility'
-    data_path1 = path.join(data_path, subpath)
-    methods = [f'{Bid}Eps_0.0_m', f'{Bid}Eps_0.1_m', f'{Bid}TS_1.0_m', f'{Bid}UCB_10.0_m']
-    #methods = [f'Logistic_Eps0.0_{Bid}', f'Logistic_Eps0.1_{Bid}', f'Logistic_TS0.1_{Bid}', f'Logistic_TS1.0_{Bid}', f'Logistic_UCB0.1_{Bid}',f'Logistic_UCB1.0_{Bid}']
-    #methods = ['Logistic_Eps0.0_20', 'Logistic_Eps0.1_20', 'Logistic_Eps0.0_50', 'Logistic_Eps0.1_50']
-    file_list = [path.join(data_path1, method+'.csv') for method in methods]
+def utility():
+    global utility_df, allocator_list
 
-    df_list = []
+    optimal_df = utility_df[df['Agent'].str.startswith('Optimal')]
+    try:
+        optimal_df.drop(columns=['bonus', 'init_random_bidding', 'decay'])
+        optimal_df.drop_duplicates()
+    except:
+        pass
+    try:
+        optimal_df.drop(columns=['bonus', 'optimism_scale', 'overbidding_factor', 'eq_winning_rate', 'overbidding_steps'])
+        optimal_df.drop_duplicates()
+    except:
+        pass
+    df = utility_df[~df['Agent'].str.startswith('Optimal')]
 
     fig, axes = plt.subplots(figsize=FIGSIZE)
 
-    for setting, file in zip(methods, file_list):
-        df = pd.read_csv(file)
-        #df = df.reset_index()
-        df = df[~df['Agent'].str.startswith('Competitor')]
-        df = df[~df['Agent'].str.startswith('Optimal')]
-
-        df['methods'] = setting
-        if agent == 'single':
-            df['Step'] = df['Step']*300
-        df_list.append(df)
-
-    df = pd.concat(df_list)
-    df = df.reset_index()
-
-    sns.lineplot(data=df, x="Step", y="Utility (Cumulative)", ax=axes, hue='methods')
+    sns.lineplot(data=df, x="Step", y="Utility (Cumulative)", hue="Agent", ax=axes)
+    sns.lineplot(data=optimal_df, x="Step", y="Utility (Cumulative)", hue="Agent", ax=axes)
 
     plt.title(f'Cumulative Utility Over Time: {experiment}', fontsize=FONTSIZE + 2)
     plt.ylabel('Cumulative Utility', fontsize=FONTSIZE)
@@ -385,48 +343,45 @@ def util():
     if agent == 'multi':
         plt.xlabel('steps per agent', fontsize=FONTSIZE)
     else:
-        plt.xlabel('steps', fontsize=FONTSIZE)
+        plt.xlabel(f'{record_interval} steps', fontsize=FONTSIZE)
         plt.xticks(fontsize=FONTSIZE - 2)
     plt.yticks(fontsize=FONTSIZE - 2)
     plt.grid(True, 'major', 'y', ls='--', lw=.5, c='k', alpha=.3)
-    plt.legend(loc='lower right', fontsize=FONTSIZE-4)
+    plt.legend(fontsize=FONTSIZE-4)
     plt.tight_layout()
-    plt.savefig(f"{output_dir}/{experiment}_Total_Utility.png", bbox_inches='tight')
+    plt.savefig(f"{output_dir}/{experiment}_Cumulative_Utility.png", bbox_inches='tight')
 
 
+def winning_prob():
+    global prob_win_df, allocator_list, exploration_list
 
+    optimal_df = prob_win_df[df['Agent'].str.startswith('Optimal')]
+    try:
+        optimal_df.drop(columns=['bonus', 'init_random_bidding', 'decay'])
+        optimal_df.drop_duplicates()
+    except:
+        pass
+    try:
+        optimal_df.drop(columns=['bonus', 'optimism_scale', 'overbidding_factor', 'eq_winning_rate', 'overbidding_steps'])
+        optimal_df.drop_duplicates()
+    except:
+        pass
+    df = prob_win_df[~df['Agent'].str.startswith('Optimal')]
 
-def winning_prob_per_method():
-    global experiment, data_path
-    subpath = 'winning_prob_1'
-    data_path_copy = path.join(data_path, subpath)
-    methods = [f'Logistic_Eps0.0_{Bid}', f'Logistic_Eps0.1_{Bid}', f'Logistic_TS0.1_{Bid}', f'Logistic_TS1.0_{Bid}', f'Logistic_UCB0.1_{Bid}',f'Logistic_UCB1.0_{Bid}']
-    file_list = [path.join(data_path_copy, method+'.csv') for method in methods]
-
-    df_list = []
     fig, axes = plt.subplots(figsize=FIGSIZE)
-
-    for setting, file in zip(methods, file_list):
-         df = pd.read_csv(file)
-         df = df.reset_index()
-         df_list.append(df)
-    
-    df = pd.concat(df_list)
-    df = df[~df['Agent'].str.startswith('Competitor')]
-    df = df.reset_index()
-
     plt.title(f'Winning Prob Over Time: {experiment}', fontsize=FONTSIZE + 2)
     sns.lineplot(data=df, x="Step", hue="Agent", y="Probability of Winning", ax=axes)
+    sns.lineplot(data=optimal_df, x="Step", y="Probability of Winning", ax=axes)
 
-    plt.xlabel('Step', fontsize=FONTSIZE)
+    plt.xlabel(f"{record_interval} steps", fontsize=FONTSIZE)
     plt.ylabel("Winning Prob", fontsize=FONTSIZE)
 
     plt.xticks(fontsize=FONTSIZE - 2)
     plt.yticks(fontsize=FONTSIZE - 2)
     plt.grid(True, 'major', 'y', ls='--', lw=.5, c='k', alpha=.3)
-    plt.legend(loc='lower right', fontsize=FONTSIZE-4)
+    plt.legend(fontsize=FONTSIZE-4)
     plt.tight_layout()
-    plt.savefig(f"{output_dir}/{Bid}_WinningProb.png", bbox_inches='tight')
+    plt.savefig(f"{output_dir}/{experiment}_WinningProb.png", bbox_inches='tight')
 
 def multibid():
     global experiment,data_path
@@ -510,12 +465,16 @@ def concat_df(data_name):
 
 
 if __name__=='__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('mode', type=str, help='what kind of plot to draw')
+    args = parser.parse_args()
+
     dir_list = os.listdir(data_path)
 
-    regret_df = pd.DataFrame(columns=['bonus_factor', 'optimism_scale', 'overbidding_facotr', 'eq_winning_rate', 'overbidding_steps'])
-    utility_df = pd.DataFrame(columns=['bonus_factor', 'optimism_scale', 'overbidding_facotr', 'eq_winning_rate', 'overbidding_steps'])
-    prob_win_df = pd.DataFrame(columns=['bonus_factor', 'optimism_scale', 'overbidding_facotr', 'eq_winning_rate', 'overbidding_steps'])
-    optimal_selection_df = pd.DataFrame(columns=['bonus_factor', 'optimism_scale', 'overbidding_facotr', 'eq_winning_rate', 'overbidding_steps'])
+    regret_df = []
+    utility_df = []
+    prob_win_df = []
+    optimal_selection_df = []
 
     experiment_list = []
     allocator_list = []
@@ -555,26 +514,42 @@ if __name__=='__main__':
                 allocator_list.append(f"Neural-UCB({agent_config['allocator']['kwargs']['nu']})")
                 
         exploration = [agent_config['bonus_factor']]
+        exploration.extend([agent_config])
         bidder_config = agent_config['bidder']
         exploration.extend([bidder_config['kwargs']['optimism_scale'],
                             bidder_config['kwargs']['overbidding_factor'],
                             bidder_config['kwargs']['eq_winning_rate'],
                             bidder_config['kwargs']['overbidding_steps'],])
-        exploration_list.append(exploration)
-
+        
         with open(path.join(directory, 'training_config.json')) as f:
             training_config = json.load(f)
+        split = training_config['random_bidding'].split()
+        exploration.extend(split)
+        exploration_list.append(exploration)
         
         regret_list.append()
-        utility_list.append(pd.read_csv(path.join(directory, 'net_utility.csv')))
-        prob_winning_list.append(pd.read_csv(path.join(directory, 'winning_probability.csv')))
-        optimal_selection_list.append(pd.read_csv(path.join(directory, 'optimal_selection_rate.csv')))
+        utility_list.append()
+        prob_winning_list.append()
+        optimal_selection_list.append()
 
-        regret = pd.read_csv(path.join(directory, 'regret.csv'))
-        regret['bonus_factor', 'optimism_scale', 'overbidding_facotr', 'eq_winning_rate', 'overbidding_steps'] = exploration
-        print(regret)
+        regret_df.append(pd.read_csv(path.join(directory, 'regret.csv')))
+        regret_df[-1]['Agent'] = allocator_list[-1]
+        utility_df.append(pd.read_csv(path.join(directory, 'net_utility.csv')))
+        utility_df[-1]['Agent'].replace('Agent', allocator_list[-1])
+        prob_win_df.append(pd.read_csv(path.join(directory, 'winning_probability.csv')))
+        prob_win_df[-1]['Agent'].replace('Agent', allocator_list[-1])
+        optimal_selection_df.append(pd.read_csv(path.join(directory, 'optimal_selection_rate.csv')))
+        optimal_selection_df[-1]['Agent'] = allocator_list[-1]
 
-        
+    regret_df = pd.concat(regret_df)
+    utility_df = pd.concat(utility_df)
+    prob_win_df = pd.concat(prob_win_df)
+    optimal_selection_df = pd.concat(optimal_selection_df)
+
+    regret()
+    utility()
+    optimal_selection_rate()
+    winning_prob()
 
    # avg_regret()
    # cum_regret()

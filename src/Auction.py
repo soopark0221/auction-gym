@@ -77,7 +77,7 @@ class Auction:
             if isinstance(agent.allocator, OracleAllocator):
                 bid, item = agent.bid(true_context)
             elif isinstance(agent.bidder, OracleBidder):
-                item, estimated_CTR = agent.select_item(obs_context)
+                item, estimated_CTR, uncertainty = agent.select_item(obs_context)
                 value = agent.item_values[item]
                 b_grid = np.linspace(0.1*value, 1.5*value, 200)
                 prob_win = self.winrate_grid(participating_agents, true_context, b_grid)

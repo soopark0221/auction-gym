@@ -1,4 +1,5 @@
 import numpy as np
+from scipy.stats import norm
 
 from BidderAllocation import *
 from Bidder import OracleBidder
@@ -10,7 +11,8 @@ from Bidder import TruthfulBidder
 class Agent:
     ''' An agent representing an advertiser '''
 
-    def __init__(self, rng, name, item_features, item_values, allocator, bidder, context_dim, update_interval, random_bidding, memory, bonus_factor=0.0):
+    def __init__(self, rng, name, item_features, item_values, allocator, bidder, context_dim, update_interval, random_bidding, memory,
+                 bonus_factor=2.0, explore_then_commit=0):
         self.rng = rng
         self.name = name
         self.items = item_features
@@ -39,6 +41,7 @@ class Agent:
 
         self.update_interval = update_interval
         self.memory = memory
+        self.explore_then_commit = explore_then_commit
 
         self.item_selection = np.zeros((self.num_items,)).astype(int)
         self.Gram = [np.zeros((self.context_dim, self.context_dim)) for _ in range(self.num_items)]
@@ -47,10 +50,9 @@ class Agent:
     def should_explore(self):
         if isinstance(self.bidder, OracleBidder) or self.random_bidding_mode=='None':
             return False
-        if (self.allocator.mode=='TS' or self.allocator.mode=='UCB') and self.use_optimistic_value:
-            return self.clock%self.update_interval < \
-            self.init_num_random_bidding/np.power(self.decay_factor, int(self.clock/self.update_interval))/4
         else:
+            # p = self.init_num_random_bidding / np.power(self.decay_factor, int(self.clock/self.update_interval)) / self.update_interval
+            # return self.rng.uniform(0,1) < p
             return self.clock%self.update_interval < \
                 self.init_num_random_bidding/np.power(self.decay_factor, int(self.clock/self.update_interval))
 
@@ -68,16 +70,7 @@ class Agent:
                 # best_item = np.argmax(self.item_values * (estim_CTRs + self.allocator.c * uncertainty))
 
         elif not isinstance(self.allocator, OracleAllocator) and self.allocator.mode=='TS':
-            estim_CTRs = self.allocator.estimate_CTR(context, TS=True)
-            TS_CTR = []
-            for i in range(5):
-                TS_CTR.append(self.allocator.estimate_CTR(context, TS=True).reshape(-1))
-            TS_CTR = np.stack(TS_CTR)
-            '''
-            best_item = np.argmax(estim_CTRs * self.item_values)
-            estim_CTRs = self.allocator.estimate_CTR(context)
-            uncertainty = np.std(TS_CTR, axis=0)
-            '''
+            estim_CTRs, uncertainty = self.allocator.estimate_CTR(context, TS=True)
             if isinstance(self.allocator, LogisticAllocatorM):
                 best_item = np.argmax(self.item_values * estim_CTRs)
             elif self.bonus_factor != 0.0:
@@ -90,7 +83,7 @@ class Agent:
                 best_item = np.argmax(estim_CTRs * self.item_values)
             estim_CTRs = self.allocator.estimate_CTR(context)
             uncertainty = np.std(TS_CTR, axis=0)
-            
+
         else:
             estim_CTRs = self.allocator.estimate_CTR(context)
             uncertainty = 0.0
@@ -109,10 +102,7 @@ class Agent:
                 best_item = self.rng.choice(self.num_items, 1).item()
 
         if not isinstance(self.allocator, OracleAllocator) and (self.allocator.mode=='UCB' or self.allocator.mode=='TS'):
-            if self.clock < 0:
-                best_item = self.rng.choice(self.num_items, 1).item()
-            return best_item, estim_CTRs[best_item], uncertainty[best_item]
-            
+            return best_item, estim_CTRs[best_item], uncertainty[best_item]  
         else:
             return best_item, estim_CTRs[best_item], uncertainty
 
@@ -124,13 +114,22 @@ class Agent:
         # Sample value for this item
         value = self.item_values[best_item]
 
-        if isinstance(self.allocator, OracleAllocator):
-            context =context[:self.context_dim]
+        if not isinstance(self.allocator, OracleAllocator):
+            context = context[:self.context_dim]
 
         if isinstance(self.bidder, OracleBidder):
-            # todo: modify oraclebidder
-            raise NotImplementedError
             bid = self.bidder.bid(value, estimated_CTR, prob_win, b_grid)
+        elif not isinstance(self.allocator, OracleAllocator):
+            bid, optimistic_CTR = self.bidder.bid(value, context, estimated_CTR, uncertainty)
+        else:
+            bid = self.bidder.bid(value, context, estimated_CTR)
+
+        if not isinstance(self.allocator, OracleAllocator) and self.clock<self.explore_then_commit:
+            bid = value *(1.0  + self.rng.normal(0.0, 1.0) * 0.02)
+            propensity = norm.pdf(bid, loc=0.0, scale=0.02)
+            if not isinstance(self.bidder, TruthfulBidder):
+                self.bidder.b.append(bid)
+                self.bidder.propensity.append(propensity)
         elif not isinstance(self.allocator, OracleAllocator) and self.should_explore():
             if self.random_bidding_mode=='uniform':
                 bid = self.rng.uniform(0, value*1.5)
@@ -142,11 +141,6 @@ class Agent:
                 bid = np.maximum(bid, 0)
             if not isinstance(self.bidder, TruthfulBidder):
                 self.bidder.b.append(bid)
-        else:
-            if not isinstance(self.allocator, OracleAllocator):
-                bid, optimistic_CTR = self.bidder.bid(value, context, estimated_CTR, uncertainty)
-            else:
-                bid = self.bidder.bid(value, context, estimated_CTR)
 
         # Log what we know so far
         self.logs.append(ImpressionOpportunity(context=context,
@@ -180,7 +174,7 @@ class Agent:
         self.logs[-1].set_price(price)
 
     def update(self):
-        if self.clock%self.update_interval:
+        if self.clock%self.update_interval or self.clock<self.explore_then_commit:
             return
         # Gather relevant logs
         contexts = np.array(list(opp.context for opp in self.logs))

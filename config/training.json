@@ -10,7 +10,8 @@
     "feature_dim": 5,
     "item_feature_var": 1.0,
     "context_distribution": "Gaussian",
-    "random_bidding": "uniform 50 1.01",
+    "explore_then_commit": 0,
+    "random_bidding": "None 10 1.01",
     "allocation": "FirstPrice",
     "network_architecture": "input-16-output",
     "use_optimistic": "True"
