@@ -517,8 +517,8 @@ class BayesianNeuralRegression(nn.Module):
         return torch.sigmoid(self.head(x, not MAP))
 
     def loss(self, predictions, labels, N):
-        kl_div = self.feature.KL_div(self.prior_var) + self.head.KL_div(self.prior_var)
-        return self.criterion(predictions, labels) + kl_div/N
+        # kl_div = self.feature.KL_div(self.prior_var) + self.head.KL_div(self.prior_var)
+        return self.criterion(predictions, labels)
     
     def get_uncertainty(self):
         uncertainties = [self.feature.get_uncertainty(),
