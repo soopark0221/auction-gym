@@ -801,8 +801,8 @@ class IPSBidder(Bidder):
 
         self.bidding_policy.train()
         N = X.size(0)
-        batch_size = min(N, 512)
-        epochs = 10
+        batch_size = N
+        epochs = 50
         for epoch in range(epochs):
             shuffled_ind = self.rng.choice(N, size=N, replace=False)
             for i in range(int(N/batch_size)):
@@ -925,7 +925,7 @@ class DRBidder(Bidder):
         self.bidding_policy.train()
         self.winrate_model.requires_grad_(False)
         N = X.size(0)
-        batch_size = min(N, 512)
+        batch_size = N
         epochs = 10
         for epoch in range(epochs):
             shuffled_ind = self.rng.choice(N, size=N, replace=False)

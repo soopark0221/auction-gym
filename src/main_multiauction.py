@@ -535,6 +535,7 @@ if __name__ == '__main__':
     # Set up Random Number Generator
     rng = np.random.default_rng(training_config['random_seed'])
     np.random.seed(training_config['random_seed'])
+    torch.manual_seed(training_config['random_seed'])
 
     num_auctions = training_config['num_auctions']
     num_runs = training_config['num_runs']

@@ -90,6 +90,7 @@ def instantiate_agents(rng, agent_configs, agents2item_values, agents2item_featu
     ]
 
     for agent in agents:
+        agent.explore_then_commit = explore_then_commit
         if (not 'Competitor' in agent.name) and agent.allocator.mode=='UCB':
             assert agent.allocator.c == agent.bidder.optimism_scale
         if isinstance(agent.allocator, OracleAllocator):
@@ -364,6 +365,7 @@ if __name__ == '__main__':
     # Set up Random Number Generator
     rng = np.random.default_rng(training_config['random_seed'])
     np.random.seed(training_config['random_seed'])
+    torch.manual_seed(training_config['random_seed'])
 
     num_runs = training_config['num_runs']
     num_iter  = training_config['num_iter']
@@ -380,6 +382,7 @@ if __name__ == '__main__':
     obs_context_dim = training_config['obs_context_dim']
     feature_dim = training_config['feature_dim']
     context_dist = training_config['context_distribution']
+    explore_then_commit = training_config['explore_then_commit']
     random_bidding = training_config['random_bidding']
     if 'None' in random_bidding:
         init_random_bidding = 0.0
