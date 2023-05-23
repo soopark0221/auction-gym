@@ -13,12 +13,12 @@
       }
     },
     {
-      "name": "NeuralBoot-UCB(1.0)",
+      "name": "Neural-Eps",
       "num_copies": 1,
       "num_items": 10,
-      "bonus_factor": 0.0,
+      "bonus_factor": 2.0,
         "allocator": {
-          "type": "NeuralBootstrapAllocator",
+          "type": "NeuralAllocator",
           "kwargs": {
             "lr": 1e-3,
             "batch_size": 512,
@@ -27,18 +27,19 @@
             "context_dim": 5,
             "latent_dim": 128,
             "num_items": 10,
-            "num_heads": 10,
-            "bootstrap": 0.8,
-            "mode": "\"UCB\"",
-            "c": 1.0
+            "eps": 0.1
           }
         },
         "bidder": {
-          "type": "RichBidder",
+          "type": "DefaultBidder",
           "kwargs": {
+            "lr": 1e-3,
+            "context_dim": 5,
+            "optimism_scale":0.0,
+            "overbidding_factor":2.0,
+            "noise": 0.0
           }
-      },
-      "memory": "inf"
+      }
     }],
-    "output_dir": "results/Rich-NeuralBoot-UCB/"
+    "output_dir": "results/Eps-Greedy/"
   }

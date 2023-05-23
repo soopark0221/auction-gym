@@ -2,12 +2,15 @@
     "random_seed": 2,
     "num_participants_per_round": 3,
     "num_runs": 5,
-    "num_iter" : 1000,
+    "num_iter" : 30000,
     "record_interval": 500,
     "update_interval": 100,
     "context_dim": 5,
     "feature_dim": 5,
     "context_distribution": "Gaussian",
-    "explore_then_commit": 0,
-    "allocation": "FirstPrice"
+    "allocation": "FirstPrice",
+    "num_auctions": 100,
+    "bonus_factor": [0.0],
+    "optimism_scale": [1.5, 1.75, 2.0, 2.25, 2.5],
+    "overbidding_factor": [1.5, 1.75, 2.0, 2.25, 2.5]
 }

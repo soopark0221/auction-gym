@@ -13,7 +13,7 @@
       }
     },
     {
-      "name": "NeuralBoot-UCB(0.1)",
+      "name": "DM",
       "num_copies": 1,
       "num_items": 10,
       "bonus_factor": 0.0,
@@ -23,22 +23,25 @@
             "lr": 1e-3,
             "batch_size": 512,
             "weight_decay": 1e-6,
-            "num_epochs": 50,
+            "num_epochs": 500,
             "context_dim": 5,
             "latent_dim": 128,
             "num_items": 10,
-            "num_heads": 10,
-            "bootstrap": 0.8,
-            "mode": "\"UCB\"",
-            "c": 0.1
+            "num_heads": 5,
+            "bootstrap": 1.0,
+            "c": 1.0
           }
         },
         "bidder": {
-          "type": "RichBidder",
+          "type": "DMBidder",
           "kwargs": {
+            "lr": 1e-3,
+            "context_dim": 5,
+            "optimism_scale": 0.0,
+            "overbidding_factor": 0.0,
+            "noise": 0.0
           }
-      },
-      "memory": "inf"
+      }
     }],
-    "output_dir": "results/Rich-NeuralBoot-UCB/"
+    "output_dir": "results/DM-BootstrapUCB/"
   }

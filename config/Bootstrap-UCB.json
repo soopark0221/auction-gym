@@ -13,17 +13,23 @@
       }
     },
     {
-      "name": "Logistic-UCB(0.5)",
+      "name": "Bootstrap-UCB",
       "num_copies": 1,
       "num_items": 10,
+      "bonus_factor": 0.5,
         "allocator": {
-          "type": "LogisticAllocatorM",
+          "type": "NeuralBootstrapAllocator",
           "kwargs": {
             "lr": 1e-3,
+            "batch_size": 512,
+            "weight_decay": 1e-6,
+            "num_epochs": 50,
             "context_dim": 5,
+            "latent_dim": 128,
             "num_items": 10,
-            "mode": "\"UCB\"",
-            "c": 0.5
+            "num_heads": 5,
+            "bootstrap": 1.0,
+            "c": 2.0
           }
         },
         "bidder": {
@@ -31,11 +37,11 @@
           "kwargs": {
             "lr": 1e-3,
             "context_dim": 5,
+            "optimism_scale": 2.0,
+            "overbidding_factor": 2.0,
             "noise": 0.0
           }
-      },
-      "memory": "inf"
+      }
     }],
-    "output_dir": "results/Logistic-UCB/",
-    "network_architecture": "input-16-output"
+    "output_dir": "results/Bootstrap-UCB/"
   }

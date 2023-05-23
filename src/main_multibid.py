@@ -97,56 +97,25 @@ def instantiate_agents(rng, agent_configs, num_auctions, auction2items, auction2
             competitors.append(agent_config)
         else:
             target_agent = agent_config
-    
-    if enable_random_bidding:
-        # number of auctions must match the number of combinations of agent configurations
-        assert len(bonus_factors) * len(optimism_scales) * len(init_random_bidding_list) == num_auctions
 
-        agents = []
-        i = 0
-        for bonus_factor in bonus_factors:
-            for optimism_scale in optimism_scales:
-                for init_random_bidding in init_random_bidding_list:
-                    allocator = eval(f"{target_agent['allocator']['type']}(rng=rng, item_features=auction2items[i]{parse_kwargs(target_agent['allocator']['kwargs'])})")
-                    bidder = eval(f"{target_agent['bidder']['type']}(rng=rng{parse_kwargs(target_agent['bidder']['kwargs'])})")
-                    bidder.optimism_scale = optimism_scale
-                    agents.append(Agent(rng=rng,
-                                        name=target_agent['name']+f" {i+1}",
-                                        item_features=auction2items[i],
-                                        item_values=auction2item_values[i],
-                                        allocator=allocator,
-                                        bidder=bidder,
-                                        context_dim = obs_context_dim,
-                                        update_interval=update_interval,
-                                        random_bidding = f"uniform {init_random_bidding} 1.01",
-                                        memory=('inf' if 'memory' not in target_agent.keys() else target_agent['memory']),
-                                        bonus_factor=bonus_factor))
-                    i += 1
-    else:
-        assert len(bonus_factors) * len(optimism_scales) * len(pessimism_ratios) * len(overbidding_factors) == num_auctions
-
-        agents = []
-        i = 0
-        for bonus_factor in bonus_factors:
-            for optimism_scale in optimism_scales:
-                for pessimism_ratio in pessimism_ratios:
-                    for overbidding_factor in overbidding_factors:
-                        allocator = eval(f"{target_agent['allocator']['type']}(rng=rng, item_features=auction2items[i]{parse_kwargs(target_agent['allocator']['kwargs'])})")
-                        bidder = eval(f"{target_agent['bidder']['type']}(rng=rng{parse_kwargs(target_agent['bidder']['kwargs'])})")
-                        bidder.optimism_scale = optimism_scale
-                        bidder.pessimism_ratio = pessimism_ratio
-                        bidder.overbidding_factor = overbidding_factor
-                        agents.append(Agent(rng=rng,
-                                            name=target_agent['name']+f" {i+1}",
-                                            item_features=auction2items[i],
-                                            item_values=auction2item_values[i],
-                                            allocator=allocator,
-                                            bidder=bidder,
-                                            context_dim = obs_context_dim,
-                                            update_interval=update_interval,
-                                            random_bidding = 'None',
-                                            memory=('inf' if 'memory' not in target_agent.keys() else target_agent['memory']),
-                                            bonus_factor=bonus_factor))
+    agents = []
+    for i in range(num_auctions):
+        bonus_factor = np.random.choice(bonus_factors)
+        optimism_scale = np.random.choice(optimism_scales)
+        overbidding_factor = np.random.choice(overbidding_factors)
+        allocator = eval(f"{target_agent['allocator']['type']}(rng=rng, item_features=auction2items[i]{parse_kwargs(target_agent['allocator']['kwargs'])})")
+        bidder = eval(f"{target_agent['bidder']['type']}(rng=rng{parse_kwargs(target_agent['bidder']['kwargs'])})")
+        bidder.optimism_scale = optimism_scale
+        bidder.overbidding_factor = overbidding_factor
+        agents.append(Agent(rng=rng,
+                            name=target_agent['name']+f" {i+1}",
+                            item_features=auction2items[i],
+                            item_values=auction2item_values[i],
+                            allocator=allocator,
+                            bidder=bidder,
+                            context_dim = obs_context_dim,
+                            update_interval=update_interval,
+                            bonus_factor=bonus_factor))
         
     competitors = [
         Agent(rng=rng,
@@ -156,9 +125,7 @@ def instantiate_agents(rng, agent_configs, num_auctions, auction2items, auction2
               allocator=eval(f"{competitor['allocator']['type']}(rng=rng, item_features=competitors2items[competitor['name']]{parse_kwargs(competitor['allocator']['kwargs'])})"),
               bidder=eval(f"{competitor['bidder']['type']}(rng=rng{parse_kwargs(competitor['bidder']['kwargs'])})"),
               context_dim = obs_context_dim,
-              update_interval=update_interval,
-              random_bidding = 'None',
-              memory=('inf' if 'memory' not in competitor.keys() else competitor['memory']))
+              update_interval=update_interval)
         for i, competitor in enumerate(competitors)
     ]
 
@@ -177,13 +144,6 @@ def instantiate_agents(rng, agent_configs, num_auctions, auction2items, auction2
             agent.allocator.c = agent.bidder.optimism_scale
         if isinstance(agent.allocator, OracleAllocator):
             agent.allocator.set_CTR_model(bilinear_map)
-        # if isinstance(agent.allocator, NeuralAllocator):
-        #     if i==0:
-        #         agent.allocator.initialize(auctions2item_values[i])
-        #     else:
-        #         agent.allocator.copy_param(agents[0].allocator)
-        if isinstance(agent.bidder, DefaultBidder):
-            agent.bidder.overbidding_steps /= num_auctions
         try:
             if i==0:
                 agent.bidder.initialize(auctions2item_values[i])
@@ -241,7 +201,6 @@ def simulation_run(run, auctions):
                 agents[j].bidder.G_w = agents[0].bidder.G_w
                 agents[j].bidder.G_l = agents[0].bidder.G_l
                 agents[j].clock = i * num_auctions + 1
-                agents[j].truncate_memory()
 
         if i % int(record_interval/len(auctions)) == 0:
             net_utility_ = 0
@@ -251,12 +210,11 @@ def simulation_run(run, auctions):
             CTR_RMSE_ = 0
             CTR_bias_ = 0
             winning_prob_ = 0
-            uncertainty_ = []
             optimal_selection_rate_ = 0
             bidding_error_ = []
             optimistic_CTR_ratio_ = 0
             regret_ = 0
-            auction_revenue_ = 0
+            auction_revenue_ = 0 
             winrate_optimal_ = 0
             utility_optimal_ = 0
 
@@ -268,7 +226,6 @@ def simulation_run(run, auctions):
                 CTR_RMSE_ += agent.get_CTR_RMSE()
                 CTR_bias_ += agent.get_CTR_bias()
                 winning_prob_ += agent.get_winning_prob()
-                uncertainty_.append(agent.get_uncertainty())
                 optimal_selection_rate_ += agent.get_optimal_selection_rate()
                 bidding_error_.append(agent.get_bidding_error())
                 optimistic_CTR_ratio_ += agent.get_optimistic_CTR_ratio()
@@ -285,7 +242,6 @@ def simulation_run(run, auctions):
             CTR_RMSE.append(CTR_RMSE_/len(auctions))
             CTR_bias.append(CTR_bias_/len(auctions))
             winning_prob.append(winning_prob_/len(auctions))
-            uncertainty.append(np.concatenate(uncertainty_))
             optimal_selection_rate.append(optimal_selection_rate_/len(auctions))
             bidding_error.append(np.concatenate(bidding_error_))
             optimistic_CTR_ratio.append(optimistic_CTR_ratio_/len(auctions))
@@ -294,25 +250,6 @@ def simulation_run(run, auctions):
             winrate_optimal.append(winrate_optimal_/len(auctions))
             utility_optimal.append(utility_optimal_)
 
-
-def plot_winrate(agent):
-    global auction, obs_context_dim
-    for i in range(2):
-        context = auction.generate_context()
-        obs_context = context[:obs_context_dim]
-        if isinstance(agent.allocator, OracleAllocator):
-            item, estimated_CTR = agent.select_item(context)
-        else:
-            item, estimated_CTR = agent.select_item(obs_context)
-        value = agent.item_values[item]
-        gamma = np.linspace(0.1, 1.5, 128).reshape(-1,1)
-        x = np.concatenate([
-            np.tile(obs_context, (128, 1)),
-            np.tile(estimated_CTR*value, (128,1))*gamma
-        ], axis=1)
-        x = torch.Tensor(x).to(agent.bidder.device)
-        y = agent.bidder.winrate_model(x).numpy(force=True).reshape(-1,1)
-        winrate_estimation.append(np.concatenate([gamma, y], axis=1))
 
 def measure_per_agent2df(run2agent2measure, measure_name):
         df_rows = {'Run': [], 'Agent': [], 'Step': [], measure_name: []}
@@ -336,30 +273,7 @@ def vector_of_measure2df(run2vector_measure, measure_name):
                 df_rows[measure_name].append(measure)
     return pd.DataFrame(df_rows)
 
-def full_measure2df(run2measure, measure_name):
-    df_rows = {'Run': [], 'Step': [], 'Parameter':[], measure_name: []}
-    for run, measure in run2measure.items():
-        for step, measure_per_step in enumerate(measure):
-            for index, measure_point in enumerate(measure_per_step):
-                df_rows['Run'].append(run)
-                df_rows['Step'].append(step)
-                df_rows['Index'].append(index)
-                df_rows[measure_name].append(measure_point)
-    return pd.DataFrame(df_rows)
-
-def winrate_estimation2df(run2winrate_estim):
-    df_rows = {'Run': [], 'Index': [], 'Gamma':[], 'Winrate': []}
-    for run, winrate_estim in run2winrate_estim.items():
-        for index, array in enumerate(winrate_estim):
-            for i in range(array.shape[0]):
-                df_rows['Run'].append(run)
-                df_rows['Index'].append(index)
-                df_rows['Gamma'].append(array[i,0])
-                df_rows['Winrate'].append(array[i,1])
-    return pd.DataFrame(df_rows)
-
 def plot_measure_per_agent(run2agent2measure, measure_name, log_y=False, yrange=None, optimal=None):
-    # Generate DataFrame for Seaborn
     if type(run2agent2measure) != pd.DataFrame:
         df = measure_per_agent2df(run2agent2measure, measure_name)
     else:
@@ -395,7 +309,6 @@ def plot_measure_per_agent(run2agent2measure, measure_name, log_y=False, yrange=
     return df
 
 def plot_vector_measure(run2vector_measure, measure_name, log_y=False, yrange=None, optimal=None):
-    # Generate DataFrame for Seaborn
     if type(run2vector_measure) != pd.DataFrame:
         df = vector_of_measure2df(run2vector_measure, measure_name)
     else:
@@ -423,24 +336,6 @@ def plot_vector_measure(run2vector_measure, measure_name, log_y=False, yrange=No
     plt.savefig(f"{output_dir}/{measure_name.replace(' ', '_')}.png", bbox_inches='tight')
     return df
 
-def plot_winrate_estimation(run2winrate_estim):
-    # Generate DataFrame for Seaborn
-    if type(run2winrate_estim) != pd.DataFrame:
-        df = winrate_estimation2df(run2winrate_estim)
-    else:
-        df = run2winrate_estim
-
-    fig, axes = plt.subplots(figsize=FIGSIZE)
-    plt.title('Winrate Estimation', fontsize=FONTSIZE + 2)
-    sns.lineplot(data=df, x="Gamma", y="Winrate", hue="Run", style="Index", ax=axes)
-    plt.xticks(fontsize=FONTSIZE - 2)
-    plt.ylabel('Winrate', fontsize=FONTSIZE)
-    plt.yticks(fontsize=FONTSIZE - 2)
-    plt.legend(loc='lower right', fontsize=FONTSIZE-4, ncol=3)
-    plt.tight_layout()
-    plt.savefig(f"{output_dir}/winrate_estimation.png", bbox_inches='tight')
-    return df
-
 def measure2df(run2measure, measure_name):
     df_rows = {'Run': [], 'Step': [], measure_name: []}
     for run, measures in run2measure.items():
@@ -452,7 +347,6 @@ def measure2df(run2measure, measure_name):
 
 
 def plot_measure(run2measure, measure_name, hue=None, optimal=None):
-    # Generate DataFrame for Seaborn
     if type(run2measure) != pd.DataFrame:
         df = measure2df(run2measure, measure_name)
     else:
@@ -479,47 +373,8 @@ def plot_measure(run2measure, measure_name, hue=None, optimal=None):
         min_measure = min(min_measure, optimal)
     plt.tight_layout()
     plt.savefig(f"{output_dir}/{measure_name.replace(' ', '_')}.png", bbox_inches='tight')
-    # plt.show()
     return df
 
-def measure2df_auc(run2measure, measure_name):
-    df_rows = {'Run': [], 'Auction': [], 'Step': [], measure_name: []}
-    for run, measures in run2measure.items():
-        for i, auction in enumerate(measures):
-            for iteration, measure in enumerate(auction):
-                df_rows['Run'].append(run)
-                df_rows['Auction'].append(i)
-                df_rows['Step'].append(iteration)
-                df_rows[measure_name].append(measure)
-    return pd.DataFrame(df_rows)
-
-def plot_measure_auc(run2measure, measure_name, hue=None):
-    # Generate DataFrame for Seaborn
-    if type(run2measure) != pd.DataFrame:
-        df = measure2df_auc(run2measure, measure_name)
-    else:
-        df = run2measure
-    df = df.reset_index()
-
-    fig, axes = plt.subplots(figsize=FIGSIZE)
-    plt.title(f'{measure_name} Over Time', fontsize=FONTSIZE + 2)
-    if hue is None:
-        sns.lineplot(data=df, x="Step", y=measure_name, ax=axes)
-    else:
-        sns.lineplot(data=df, x="Step", y=measure_name, hue=hue, ax=axes)
-    min_measure = min(0.0, np.min(df[measure_name]))
-    max_measure = max(0.0, np.max(df[measure_name]))
-    plt.xticks(fontsize=FONTSIZE - 2)
-    plt.ylabel(f'{measure_name}', fontsize=FONTSIZE)
-    plt.xlabel(f"x{record_interval} steps", fontsize=FONTSIZE)
-    factor = 1.1 if min_measure < 0 else 0.9
-    plt.ylim(min_measure * factor, max_measure * 1.1)
-    plt.yticks(fontsize=FONTSIZE - 2)
-    plt.grid(True, 'major', 'y', ls='--', lw=.5, c='k', alpha=.3)
-    plt.tight_layout()
-    plt.savefig(f"{output_dir}/{measure_name.replace(' ', '_')}.png", bbox_inches='tight')
-    # plt.show()
-    return df  
 
 if __name__ == '__main__':
     # Parse commandline arguments
@@ -546,20 +401,13 @@ if __name__ == '__main__':
     # Technical parameters for distribution of latent embeddings
     max_slots = 1
     context_dim = training_config['context_dim']
-    obs_context_dim = training_config['obs_context_dim']
     context_dist = training_config['context_distribution']
     feature_dim = training_config['feature_dim']
 
     bonus_factors = training_config['bonus_factor']
     optimism_scales = training_config['optimism_scale']
-    enable_random_bidding = training_config['enable_random_bidding']
-    if enable_random_bidding:
-        init_random_bidding_list = training_config['init_random_bidding']
-    else: # adaptive bidding
-        pessimism_ratios = training_config['pessimism_ratio']
-        overbidding_factors = training_config['overbidding_factor']
+    overbidding_factors = training_config['overbidding_factor']
     
-
     os.environ["CUDA_VISIBLE_DEVICES"]= args.cuda
     print("running in {}".format('cuda' if torch.cuda.is_available() else 'cpu'))
 
@@ -570,7 +418,7 @@ if __name__ == '__main__':
         os.makedirs(output_dir)
     
     shutil.copy(args.config, os.path.join(output_dir, 'agent_config.json'))
-    shutil.copy('config/training_multiauction.json', os.path.join(output_dir, 'training_config.json'))
+    shutil.copy('config/training_multibid.json', os.path.join(output_dir, 'training_config.json'))
 
     # Plotting config
     FIGSIZE = (8, 5)
@@ -588,8 +436,6 @@ if __name__ == '__main__':
     run2winning_prob = {}
 
     run2auction_revenue = {}
-    
-    run2uncertainty = {}
 
     run2regret = {}
     run2optimal_selection_rate = {}
@@ -608,7 +454,7 @@ if __name__ == '__main__':
         auctions2items = run2auction2items[run]
         auctions2item_values = run2auction2item_values[run]
         agents, competitors = instantiate_agents(rng, agent_configs, num_auctions, run2auction2items[run], run2auction2item_values[run],
-                       run2competitors2items[run], run2competitors2item_values[run], obs_context_dim, update_interval, bilinear_map)
+                       run2competitors2items[run], run2competitors2item_values[run], context_dim, update_interval, bilinear_map)
         
         auctions = []
         for i in range(num_auctions):
@@ -618,7 +464,7 @@ if __name__ == '__main__':
             values_for_auction = {competitor.name : competitor.item_values for competitor in competitors}
             values_for_auction[agents[i].name] = agents[i].item_values
             auction = instantiate_auction(
-                rng, training_config, bilinear_map, items_for_auction, values_for_auction, agents_for_auction, max_slots, context_dim, obs_context_dim, context_dist)
+                rng, training_config, bilinear_map, items_for_auction, values_for_auction, agents_for_auction, max_slots, context_dim, context_dim, context_dist)
             auctions.append(auction)
         
         net_utility = []
@@ -631,19 +477,15 @@ if __name__ == '__main__':
         CTR_bias = []
 
         winning_prob = []
-
-        uncertainty = []
         optimal_selection_rate = []
         bidding_error = []
         optimistic_CTR_ratio = []
 
-        winrate_estimation = []
         regret = []
         auction_revenue = []
         winrate_optimal = []
         utility_optimal = []
 
-        # Run simulation (with global parameters -- fine for the purposes of this script)
         simulation_run(run, auctions)
 
         run2net_utility[run] = net_utility
@@ -655,7 +497,6 @@ if __name__ == '__main__':
         run2CTR_RMSE[run] = CTR_RMSE
         run2CTR_bias[run] = CTR_bias
 
-        run2uncertainty[run] = uncertainty
         run2winning_prob[run] = winning_prob
 
         run2auction_revenue[run] = auction_revenue
@@ -712,5 +553,3 @@ if __name__ == '__main__':
     plot_measure(regret_df, 'Regret')
     
     plot_vector_measure(run2bidding_error, 'Bidding Error')
-    uncertainty_df = plot_vector_measure(run2uncertainty, 'Uncertainty in Parameters')
-    # uncertainty_df.to_csv(f'{output_dir}/uncertainty.csv', index=False)
