@@ -2,7 +2,7 @@
     "agents": [ {
       "name": "Competitor-Truthful",
       "num_copies": 2,
-      "num_items": 10,
+      "num_items": 20,
         "allocator": {
           "type": "OracleAllocator",
           "kwargs": {}
@@ -15,7 +15,7 @@
     {
       "name": "Bootstrap-UCB",
       "num_copies": 1,
-      "num_items": 10,
+      "num_items": 20,
       "bonus_factor": 0.5,
         "allocator": {
           "type": "NeuralBootstrapAllocator",
@@ -26,10 +26,10 @@
             "num_epochs": 50,
             "context_dim": 5,
             "latent_dim": 128,
-            "num_items": 10,
+            "num_items": 20,
             "num_heads": 5,
             "bootstrap": 1.0,
-            "c": 2.0
+            "c": 1.0
           }
         },
         "bidder": {
@@ -37,7 +37,7 @@
           "kwargs": {
             "lr": 1e-3,
             "context_dim": 5,
-            "optimism_scale": 2.0,
+            "optimism_scale": 1.0,
             "overbidding_factor": 2.0,
             "noise": 0.0
           }

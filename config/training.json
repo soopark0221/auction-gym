@@ -2,12 +2,12 @@
     "random_seed": 2,
     "num_participants_per_round": 3,
     "num_runs": 5,
-    "num_iter" : 1000,
+    "num_iter" : 30000,
     "record_interval": 500,
-    "update_interval": 100,
+    "update_interval": 2000,
     "context_dim": 5,
     "feature_dim": 5,
     "context_distribution": "Gaussian",
-    "explore_then_commit": 0,
+    "explore_then_commit": 2000,
     "allocation": "FirstPrice"
 }

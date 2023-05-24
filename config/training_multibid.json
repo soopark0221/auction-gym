@@ -1,8 +1,8 @@
 {
     "random_seed": 2,
     "num_participants_per_round": 3,
-    "num_runs": 5,
-    "num_iter" : 30000,
+    "num_runs": 1,
+    "num_iter" : 1000,
     "record_interval": 500,
     "update_interval": 100,
     "context_dim": 5,

@@ -275,7 +275,7 @@ class DRBidder(Bidder):
         for epoch in tqdm(range(epochs), desc='initializing bidding policy'):
             optimizer.zero_grad()
             loss = MSE(self.bidding_policy.mu(X).squeeze(), mu.squeeze())
-            loss += MSE(self.bidding_policy.std(X).squeeze(), std.squeeze())
+            loss += MSE(self.bidding_policy.sigma(X).squeeze(), std.squeeze())
             loss.backward()
             optimizer.step()
         self.bidding_policy.eval()

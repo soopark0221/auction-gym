@@ -2,7 +2,7 @@
     "agents": [ {
       "name": "Competitor-Truthful",
       "num_copies": 2,
-      "num_items": 10,
+      "num_items": 20,
         "allocator": {
           "type": "OracleAllocator",
           "kwargs": {}
@@ -15,8 +15,8 @@
     {
       "name": "Neural-Greedy",
       "num_copies": 1,
-      "num_items": 10,
-      "bonus_factor": 0.0,
+      "num_items": 20,
+      "bonus_factor": 0.5,
         "allocator": {
           "type": "NeuralAllocator",
           "kwargs": {
@@ -26,7 +26,7 @@
             "num_epochs": 50,
             "context_dim": 5,
             "latent_dim": 128,
-            "num_items": 10,
+            "num_items": 20,
             "eps": 0.0
           }
         },
@@ -36,7 +36,7 @@
             "lr": 1e-3,
             "context_dim": 5,
             "optimism_scale":0.0,
-            "overbidding_factor":0.0,
+            "overbidding_factor":1.0,
             "noise": 0.0
           }
       }

@@ -87,16 +87,10 @@ def instantiate_agents(rng, agent_configs, agents2item_values, agents2item_featu
 
     for agent in agents:
         agent.explore_then_commit = explore_then_commit
-        if (not 'Competitor' in agent.name) and (not isinstance(agent.allocator, OracleAllocator)) and agent.allocator.mode=='UCB':
-            assert agent.allocator.c == agent.bidder.optimism_scale
         if isinstance(agent.allocator, OracleAllocator):
             agent.allocator.set_CTR_model(bilinear_map)
-        if isinstance(agent.allocator, NeuralAllocator):
-            agent.allocator.initialize(agents2item_values[agent.name])
-        try:
+        if 'Competitor' not in agent.name:
             agent.bidder.initialize(agents2item_values[agent.name])
-        except:
-            pass
 
     return agents
 

@@ -384,7 +384,7 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    with open('config/training_multiauction.json') as f:
+    with open('config/training_multibid.json') as f:
         training_config = json.load(f)        
 
     # Set up Random Number Generator

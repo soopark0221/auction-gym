@@ -2,7 +2,7 @@
     "agents": [ {
       "name": "Competitor-Truthful",
       "num_copies": 2,
-      "num_items": 10,
+      "num_items": 20,
         "allocator": {
           "type": "OracleAllocator",
           "kwargs": {}
@@ -13,9 +13,9 @@
       }
     },
     {
-      "name": "DR",
+      "name": "IPS",
       "num_copies": 1,
-      "num_items": 10,
+      "num_items": 20,
       "bonus_factor": 0.0,
       "allocator": {
         "type": "NeuralBootstrapAllocator",
@@ -23,25 +23,27 @@
           "lr": 1e-3,
           "batch_size": 512,
           "weight_decay": 1e-6,
-          "num_epochs": 50,
+          "num_epochs": 500,
           "context_dim": 5,
           "latent_dim": 128,
-          "num_items": 10,
+          "num_items": 20,
           "num_heads": 5,
           "bootstrap": 1.0,
           "c": 1.0
         }
         },
         "bidder": {
-          "type": "DRBidder",
+          "type": "IPSBidder",
           "kwargs": {
             "lr": 1e-3,
             "context_dim": 5,
             "entropy_factor": -0.05,
+            "use_WIS": false,
             "optimism_scale":0.0,
             "overbidding_factor":0.0
           }
       }
     }],
-    "output_dir": "results/DR-UCB/"
+    "output_dir": "results/IPS/",
+    "bidder_epoch": "2000"
   }
