@@ -17,10 +17,10 @@ class ImpressionOpportunity:
     optimistic_CTR: np.float32
     price: np.float32
     second_price: np.float32
-    outcome: np.bool
-    won: np.bool
+    outcome: bool
+    won: bool
     utility: np.float32
-    optimal_item: np.bool
+    optimal_item: bool
     bidding_error: np.float32
 
     def set_true_CTR(self, best_expected_value, true_CTR):
