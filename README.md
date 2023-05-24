@@ -5,7 +5,7 @@ Source code for Double-UCB algorithm and baseline methods. The simulation enviro
 ## Reproducing Results
 To install the requirments, run:
 ```
-pip install -r requirements
+pip install -r requirements.txt
 ```
 
 The config files are located on config/ directory. Details on config can be found in `config.md`. The files `training.json` and `training_multibid.json` contains the configurations of the auction environment and training. The other config files describes agents participating auctions. To reproduce the results of Double-UCB, run:
