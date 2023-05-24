@@ -3,8 +3,12 @@
 Source code for Double-UCB algorithm and baseline methods. The simulation environment is based on [AuctionGym](https://github.com/amzn/auction-gym.git). Networks are implemented using Pytorch 2.0 and Python 3.10.
 
 ## Reproducing Results
+To install the requirments, run:
+```
+pip install -r requirements
+```
 
-The config files are located on config/ directory. The files `training.json` and `training_multibid.json` contains the configurations of the auction environment and training. The other config files describes agents participating auctions. To reproduce the results of Double-UCB, run:
+The config files are located on config/ directory. Details on config can be found in `config.md`. The files `training.json` and `training_multibid.json` contains the configurations of the auction environment and training. The other config files describes agents participating auctions. To reproduce the results of Double-UCB, run:
 ```
 python src/main.py config/Bootstrap-UCB.json
 ```
